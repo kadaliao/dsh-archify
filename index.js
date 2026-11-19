@@ -733,9 +733,9 @@ export function createRunner(ctx, { jobs, store, workdir }) {
       const item = store.get(String(body.id ?? ''));
       if (!item) return { ok: false, reason: 'missing' };
       const spec = parseJson(readText(item.candidate));
-      const checks = item.type === 'architecture' && spec ? reviewArchitecture(spec) : { findings: [] };
+      const checks = item.type === 'architecture' && spec ? reviewArchitecture(spec, { kind: body.kind }) : { findings: [] };
       const repo = item.cwd && spec && citesSources(item.type, JSON.stringify(spec)) ? await gitRoot(item.cwd) : '';
-      const text = reviewPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', title: item.title, candidate: item.candidate, findings: findingLines(checks), repo });
+      const text = reviewPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', title: item.title, candidate: item.candidate, findings: findingLines(checks), repo, kind: checks.kind ?? '' });
       const job = jobs.create({ kind: 'review', type: item.type, dir: item.cwd, title: `Archify · ${body.lang === 'zh' ? '点评' : 'review'} · ${item.title}`, pageId: item.id });
       try {
         const sessionId = await send({ text, title: job.title, dir: item.cwd, sessionId: body.newConversation === true ? '' : item.sessionId });
@@ -851,7 +851,7 @@ export function apply(ctx, config) {
             if (!item) return { supported: false, reason: 'missing', findings: [] };
             const spec = parseJson(readText(item.candidate));
             if (!spec) return { supported: false, reason: 'no-candidate', findings: [] };
-            return reviewArchitecture(spec);
+            return reviewArchitecture(spec, { kind: url.searchParams.get('kind') ?? '' });
           }),
       }),
     );

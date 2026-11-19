@@ -384,15 +384,17 @@ test('Gallery reviews an architecture in the reader\'s language and asks the mod
   const item = { id: 'p1', type: 'architecture', title: 'Shop', path: '/w/shop.html', folder: '/w/.archify/architecture-shop-1', version: 'v1', aspect: 0.6, sessionId: 's1', updatedAt: Date.now() };
   const { calls, render } = panelHarness({
     '/__dsh_archify/list': { items: [item], total: 1, hasMore: false },
-    '/__dsh_archify/review': {
+    '/__dsh_archify/review': (_b, url) => ({
       supported: true,
+      kind: /kind=service/.test(url) ? 'service' : 'app',
+      guessed: 'app',
       summary: { components: 6, connections: 7, async: 1, boundaries: 1 },
       findings: [
         { code: 'shared-store', level: 'risk', params: { store: 'DB', n: 3, users: ['A', 'B', 'C'] } },
         { code: 'deep-chain', level: 'warn', params: { hops: 5, path: ['Web', 'API', 'S1', 'S2', 'S3', 'DB'] } },
         { code: 'async-decoupling', level: 'good', params: { bus: ['Queue'] } },
       ],
-    },
+    }),
     '/__dsh_archify/ask': (b) => ({ ok: true, job: { id: 'r1', kind: 'review', pageId: b.id, state: 'running', activity: 'thinking', steps: 0, pages: [], startedAt: Date.now(), sessionId: 's1' } }),
   });
   let tree = render();
@@ -414,9 +416,17 @@ test('Gallery reviews an architecture in the reader\'s language and asks the mod
   assert.match(text(by(tree, 'data-dsh-archify-review', 'p1')[0]).join(''), /6 个组件 · 7 条连线（1 条异步）· 1 个边界/);
   by(tree, 'data-dsh-archify-ask', 'p1')[0].props.onClick(ev);
   await flush();
-  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh' });
+  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh', kind: 'app' });
   tree = render();
   assert.equal(by(tree, 'data-dsh-archify-ask').length, 0, 'the running review replaces the button');
+  // The review says which kind of software it assumed, and switches on a click.
+  assert.match(text(by(tree, 'data-dsh-archify-review-kind', 'app')[0]).join(''), /按运行在一台机器上的应用（桌面、移动、命令行、插件）检查。.*改按由联网服务组成的系统检查/);
+  by(tree, 'data-dsh-archify-review-switch', 'service')[0].props.onClick(ev);
+  tree = render();
+  await flush();
+  tree = render();
+  assert.ok(calls.some((c) => /\/__dsh_archify\/review\?id=p1&kind=service/.test(c.url)), 'refetched as services');
+  assert.ok(by(tree, 'data-dsh-archify-review-kind', 'service')[0]);
   // Closing the sheet leaves the drawing alone.
   by(tree, 'data-dsh-archify-review-close')[0].props.onClick(ev);
   tree = render();

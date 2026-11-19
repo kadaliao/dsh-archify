@@ -1272,14 +1272,14 @@ window.__ModuleLoader__.load({
     }
 
     /** Review: the plugin's structural checks of a drawn architecture, and the model's deeper review. */
-    function ReviewBox({ t, item, env, jobs, onJob, side, data, onClose }) {
+    function ReviewBox({ t, item, env, jobs, onJob, side, data, onClose, onKind }) {
       const [asking, setAsking] = useState(false);
       const [error, setError] = useState('');
       const job = (jobs ?? []).find((j) => j.kind === 'review' && j.pageId === item.id);
       const ask = () => {
         setAsking(true);
         setError('');
-        void postJson(ASK_ROUTE, { id: item.id, lang: langOf(t) })
+        void postJson(ASK_ROUTE, { id: item.id, lang: langOf(t), ...(data?.kind ? { kind: data.kind } : {}) })
           .then((r) => {
             if (r?.job) onJob?.(r.job);
             if (!r?.ok) setError(r?.reason || t('actionFailed'));
@@ -1300,6 +1300,21 @@ window.__ModuleLoader__.load({
           onClose ? h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }), 'data-dsh-archify-review-close': true }) : null,
         ),
         s ? h('span', { style: { fontSize: 11.5, color: C.faint } }, t('reviewSummary', { components: s.components, connections: s.connections, async: s.async, boundaries: s.boundaries })) : null,
+        // Which kind of software the checks assumed, and the other one a click away.
+        data?.kind
+          ? h(
+              'div',
+              { 'data-dsh-archify-review-kind': data.kind, style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, color: C.muted, padding: '6px 9px', borderRadius: 8, background: C.layer2 } },
+              h('span', null, t('reviewAs', { kind: t(`kind.${data.kind}`) })),
+              onKind
+                ? h(
+                    'button',
+                    { type: 'button', 'data-dsh-archify-review-switch': data.kind === 'app' ? 'service' : 'app', onClick: () => onKind(data.kind === 'app' ? 'service' : 'app'), style: { font: 'inherit', fontSize: 12, color: C.label, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' } },
+                    t('reviewSwitch', { kind: t(`kind.${data.kind === 'app' ? 'service' : 'app'}`) }),
+                  )
+                : null,
+            )
+          : null,
         h(
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
@@ -1352,6 +1367,7 @@ window.__ModuleLoader__.load({
       const [jobs, setJobs] = useState([]);
       const [seed, setSeed] = useState(null);
       const [reviewOpen, setReviewOpen] = useState(false);
+      const [reviewKinds, setReviewKinds] = useState({});
       const [, setTick] = useState(0);
       const alive = useRef(true);
       const itemsRef = useRef(items);
@@ -1486,13 +1502,13 @@ window.__ModuleLoader__.load({
           : undefined;
 
       const [review, setReview] = useState(null);
-      const reviewKey = current && current.type === 'architecture' && !current.missing ? `${current.id}:${current.version}` : '';
+      const reviewKey = current && current.type === 'architecture' && !current.missing ? `${current.id}:${current.version}:${reviewKinds[current.id] ?? ''}` : '';
       useEffect(() => {
         let alive = true;
         setReview(null);
         if (!reviewKey) return undefined;
-        const id = reviewKey.split(':')[0];
-        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(id)}`)
+        const [id, , kind] = reviewKey.split(':');
+        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(id)}${kind ? `&kind=${kind}` : ''}`)
           .then((r) => alive && setReview({ key: reviewKey, ...(r ?? { supported: false, findings: [] }) }))
           .catch(() => alive && setReview({ key: reviewKey, supported: false, findings: [] }));
         return () => {
@@ -1649,7 +1665,7 @@ window.__ModuleLoader__.load({
                       : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? 356 : 0), title: current.title })),
                     h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
                   );
-                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, h('div', { style: { width: 340, flex: 'none', position: 'sticky', top: 0 } }, h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'docked', data: reviewData })));
+                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, h('div', { style: { width: 340, flex: 'none', position: 'sticky', top: 0 } }, h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'docked', data: reviewData, onKind: (k) => setReviewKinds((m) => ({ ...m, [current.id]: k })) })));
                   return drawing;
                 })(),
               ),
@@ -1658,7 +1674,7 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { 'data-dsh-archify-review-sheet': current.id, style: { position: 'absolute', top: 45, right: 0, bottom: 0, width: Math.min(400, Math.max(300, Math.round(paneW * 0.48))), borderLeft: `1px solid ${C.border1}`, boxShadow: '-12px 0 28px rgba(0,0,0,.10)', zIndex: 5 } },
-                    h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'sheet', data: reviewData, onClose: () => setReviewOpen(false) }),
+                    h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'sheet', data: reviewData, onClose: () => setReviewOpen(false), onKind: (k) => setReviewKinds((m) => ({ ...m, [current.id]: k })) }),
                   )
                 : null,
             )
@@ -1841,6 +1857,15 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "Asynchronous work goes through {bus}, so producers and consumers are decoupled.",
         "reviewInPanel": "Review this architecture (Archify panel)",
         "scanned": "scanned {root}",
+        "kind.app": "an app on one machine (desktop, mobile, CLI, plugin)",
+        "kind.service": "a system of networked services",
+        "reviewAs": "Checked as {kind}.",
+        "reviewSwitch": "Check it as {kind} instead",
+        "rv.app-shared-state": "{n} parts read or write \"{store}\" ({users}). Shared state is fine in an app, but with many writers it gets hard to tell where a value came from and who changed it; check that writes go through one place.",
+        "rv.app-hub": "{n} parts depend on \"{name}\": a core module. A change to it reaches far, so it is the first place tests pay off.",
+        "rv.app-outside": "{n} features depend on \"{name}\", which this app does not own ({users}). A system update or a new version of it can change how it behaves; these features should tell the person when it stops working.",
+        "rv.app-permissions": "{n} parts need a system permission ({names}). When it is not granted or is taken back, they should degrade and tell the person where to turn it on.",
+        "rv.app-ui-state": "The screens take their data through \"{store}\", so what is shown and what does the work are kept apart.",
         "newFrom": "From a project",
         "newFromHint": "optional: without a folder, only your description is drawn",
         "newWhatToDraw": "What to draw",
@@ -2023,6 +2048,15 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "异步工作经由 {bus}，生产者和消费者是解耦的。",
         "reviewInPanel": "点评这张架构图（Archify 面板）",
         "scanned": "已扫描 {root}",
+        "kind.app": "运行在一台机器上的应用（桌面、移动、命令行、插件）",
+        "kind.service": "由联网服务组成的系统",
+        "reviewAs": "按{kind}检查。",
+        "reviewSwitch": "改按{kind}检查",
+        "rv.app-shared-state": "{n} 个部分直接读写「{store}」（{users}）。共享状态在应用里很正常，但改它的地方多了，值从哪来、被谁改就不好追；确认写入有统一的入口。",
+        "rv.app-hub": "{n} 个部分依赖「{name}」，它是核心模块：改它影响面大，最值得先写测试。",
+        "rv.app-outside": "{n} 个功能依赖「{name}」（{users}），它不归这个应用管：系统更新或对方改版都可能改变它的行为，这些功能在它失效时要能告诉用户。",
+        "rv.app-permissions": "{n} 个部分需要系统权限（{names}）。没授权或权限被收回时，它们要能降级，并告诉用户去哪里打开。",
+        "rv.app-ui-state": "界面统一经由「{store}」取数据，显示和干活的逻辑是分开的。",
         "newFrom": "从哪个项目画",
         "newFromHint": "可选：不选就只按你的描述画",
         "newWhatToDraw": "要画什么",

@@ -109,13 +109,16 @@ to preview it; from there open it full screen, in the browser, in its folder, or
 conversation it was drawn in. **Remove** only takes it off the list; the file stays.
 
 For an architecture diagram, **Review** in the header (it counts the points worth a look) opens the
-review beside the drawing; on a wide screen it stays docked there. It reads the system the drawing
-describes: a data store
-several services share, a client reaching a database directly, a client calling many services with
-no gateway in front, a part everything depends on, a synchronous dependency cycle, a call chain of
-five hops or more, external services on the call path, no authentication or network boundary,
-nothing that monitors the system, parts with no connection, and what is done well (data owned per
-service, one front door, a queue decoupling the work). These are heuristics over the drawing, not
+review beside the drawing; on a wide screen it stays docked there. It first decides what kind of
+software the drawing describes, says so, and lets you switch: **an app on one machine** (desktop,
+mobile, a CLI, a plugin, a library), whose parts are modules of one process, is checked for what it
+leans on that it does not own (the operating system, other apps), the parts that need a system
+permission, state that many parts write, core modules many parts depend on, cycles and
+unconnected parts; **a system of networked services** is checked for a data store several services
+share, a client reaching a database directly, many services called with no gateway in front, a
+service everything depends on, synchronous cycles, call chains of five hops or more, external
+services on the call path, no authentication or network boundary and nothing that monitors it.
+Both note what is done well. These are heuristics over the drawing, not
 the code: each one is a question to check. **Ask the model to review** sends them with the diagram
 to the conversation that drew it, for a verdict, the main risks, concrete suggestions and strengths.
 The conversation card of an architecture diagram has a **Review** button that opens it here.

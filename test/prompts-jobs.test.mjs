@@ -30,7 +30,13 @@ test('a review prompt carries the candidate, the findings and the shape of the a
   assert.match(zh, /点评架构图「下单系统」描述的这个系统架构本身/);
   assert.match(zh, /\/w\/\.archify\/a\/candidate\.json/);
   assert.match(zh, /- \[risk\] x/);
-  assert.match(zh, /1\. 一句话总评/);
+  assert.match(zh, /1\. 这是什么软件，一句话总评/);
+  assert.match(zh, /先用一句话说清这是什么类型的软件/);
+  const app = reviewPrompt({ lang: 'zh', title: '岛民', candidate: '/c.json', kind: 'app' });
+  assert.match(app, /运行在一台机器上的应用/);
+  assert.match(app, /横向扩展、消息队列、网关、集群、服务监控这些服务端的事在这里不适用/);
+  assert.match(app, /2\. 主要风险，按严重程度排（耦合、状态管理、系统与其他应用的依赖、权限、错误处理、性能）/);
+  assert.match(reviewPrompt({ lang: 'en', candidate: '/c.json', kind: 'app' }), /scaling out, message queues, gateways, clusters and service monitoring do not apply here/);
   const en = reviewPrompt({ lang: 'en', candidate: '/c.json' });
   assert.match(en, /Review the system architecture/);
   assert.doesNotMatch(en, /structural checks/);
