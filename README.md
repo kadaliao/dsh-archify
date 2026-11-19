@@ -20,7 +20,7 @@ light and dark themes, motion and export.
 
 ## Install
 
-Add this repository's index in DeepSeek Harness (**Plugins → Discover → Sources**):
+Add the [DSH Plugins](https://github.com/kadaliao/dsh-plugins) index in DeepSeek Harness (**Plugins → Discover → Sources**):
 
 ```
 https://raw.githubusercontent.com/kadaliao/dsh-plugins/main/marketplace.json
@@ -29,11 +29,20 @@ https://raw.githubusercontent.com/kadaliao/dsh-plugins/main/marketplace.json
 then install **Archify**. The Discover tab is part of the experimental **Custom plugin markets**
 feature; turn it on under **Plugins → Experimental plugins** if you don't see it.
 
-Without Discover, paste the Git spec into the plugin manager:
+Without Discover, paste the package name into the plugin manager:
 
 ```
-git+https://github.com/kadaliao/dsh-plugins.git#main&path:/plugins/archify
+@kadaliao/dsh-archify
 ```
+
+Or from a terminal with the `dsh` CLI (`--profile desktop` for the desktop app; restart Harness
+afterwards):
+
+```
+dsh plugin --profile web add @kadaliao/dsh-archify
+```
+
+For the latest unreleased code, use the Git spec `git+https://github.com/kadaliao/dsh-archify.git#main` instead.
 
 Refresh the page once after installing. There is nothing to configure: no Node.js install, no
 key, no model of its own. Archify runs with the Harness's own JavaScript runtime.
@@ -157,8 +166,8 @@ On the plugin's row in your profile patch (`cordis.patch.yml`):
 ## Bundled Archify
 
 `archify/` is Archify 3.2.0 from `main` at the commit recorded in
-[`archify/UPSTREAM.json`](archify/UPSTREAM.json), unmodified, minus its tests, pre-rendered example
-pages, generator scripts and lockfile. [`skill/SKILL.md`](skill/SKILL.md) is its `SKILL.md` adapted
+[`archify/UPSTREAM.json`](https://github.com/kadaliao/dsh-archify/blob/main/archify/UPSTREAM.json), unmodified, minus its tests, pre-rendered example
+pages, generator scripts and lockfile. [`skill/SKILL.md`](https://github.com/kadaliao/dsh-archify/blob/main/skill/SKILL.md) is its `SKILL.md` adapted
 for Harness: the shell commands become the two tools, the update check and setup sections are
 removed, and delivery stops at the first passing page. To refresh the copy from a checkout of
 tt-a1i/archify:
@@ -175,5 +184,5 @@ separate process the plugin starts for each architecture layout.
 
 The plugin is MIT. `archify/` is Apache-2.0 with historical MIT grants, by tt-a1i: see its
 `LICENSE`, `LICENSE-MIT`, `NOTICE` and `THIRD_PARTY_NOTICES.md`, and this plugin's
-[NOTICE](NOTICE). `vendor/elkjs/` is used under the Eclipse Public License 2.0 (elkjs is offered
+[NOTICE](https://github.com/kadaliao/dsh-archify/blob/main/NOTICE). `vendor/elkjs/` is used under the Eclipse Public License 2.0 (elkjs is offered
 under EPL-2.0 or GPL-3.0-or-later): see `vendor/elkjs/LICENSE.md`.

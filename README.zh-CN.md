@@ -18,7 +18,7 @@
 
 ## 安装
 
-在 DeepSeek Harness 里添加本仓库的索引（**插件 → 发现 → 来源**）：
+在 DeepSeek Harness 里添加 [DSH Plugins](https://github.com/kadaliao/dsh-plugins) 的索引（**插件 → 发现 → 来源**）：
 
 ```
 https://raw.githubusercontent.com/kadaliao/dsh-plugins/main/marketplace.json
@@ -27,11 +27,19 @@ https://raw.githubusercontent.com/kadaliao/dsh-plugins/main/marketplace.json
 然后安装 **Archify 图解**。「发现」页属于实验功能 **自定义插件市场**，看不到的话先在
 **插件 → 实验性插件** 里打开。
 
-不用「发现」页的话，把 Git 地址粘贴到插件管理器：
+不用「发现」页的话，把包名粘贴到插件管理器：
 
 ```
-git+https://github.com/kadaliao/dsh-plugins.git#main&path:/plugins/archify
+@kadaliao/dsh-archify
 ```
+
+也可以在终端里用 `dsh` 命令行装（桌面版用 `--profile desktop`，装完重启 Harness）：
+
+```
+dsh plugin --profile web add @kadaliao/dsh-archify
+```
+
+想用还没发布的最新代码，改用 Git 地址 `git+https://github.com/kadaliao/dsh-archify.git#main`。
 
 装好后刷新一次页面。不需要任何配置：不用装 Node.js，不用填密钥，也不另调模型。Archify 直接用 Harness
 自带的 JavaScript 运行时跑。
@@ -134,8 +142,8 @@ Archify 的检查很严，模型的时间大多花在修布局上。插件把这
 ## 内置的 Archify
 
 `archify/` 是 Archify 3.2.0，取自 `main` 分支，具体提交记在
-[`archify/UPSTREAM.json`](archify/UPSTREAM.json)。内容没有改动，只去掉了测试、预渲染的示例页面、生成脚本和
-lockfile。[`skill/SKILL.md`](skill/SKILL.md) 是它的 `SKILL.md` 为 Harness 改写的版本：shell 命令换成两个工具，
+[`archify/UPSTREAM.json`](https://github.com/kadaliao/dsh-archify/blob/main/archify/UPSTREAM.json)。内容没有改动，只去掉了测试、预渲染的示例页面、生成脚本和
+lockfile。[`skill/SKILL.md`](https://github.com/kadaliao/dsh-archify/blob/main/skill/SKILL.md) 是它的 `SKILL.md` 为 Harness 改写的版本：shell 命令换成两个工具，
 去掉更新检查和安装两节，第一次通过就交付。从 tt-a1i/archify 的本地仓库更新这份副本：
 
 ```bash
@@ -148,5 +156,5 @@ JavaScript 的 Eclipse Layout Kernel），没有改动。它只在排版进程�
 ## 许可
 
 插件本身是 MIT。`archify/` 是 tt-a1i 的作品，Apache-2.0 并保留历史上的 MIT 授权，见其中的 `LICENSE`、
-`LICENSE-MIT`、`NOTICE`、`THIRD_PARTY_NOTICES.md`，以及本插件的 [NOTICE](NOTICE)。`vendor/elkjs/` 按
+`LICENSE-MIT`、`NOTICE`、`THIRD_PARTY_NOTICES.md`，以及本插件的 [NOTICE](https://github.com/kadaliao/dsh-archify/blob/main/NOTICE)。`vendor/elkjs/` 按
 Eclipse Public License 2.0 使用（elkjs 以 EPL-2.0 或 GPL-3.0-or-later 授权），见 `vendor/elkjs/LICENSE.md`。
