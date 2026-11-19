@@ -11,11 +11,11 @@ for a one-page explainer that answers a question. The conversation model writes 
 Archify JSON, the plugin renders and checks it, and the page appears in the conversation with
 light and dark themes, motion and export.
 
-Or skip the typing: in the **Archify panel**, pick a project folder and a diagram type and press
-**Generate**. The plugin scans the repository, starts the conversation and shows its progress, and
-the page lands in the panel's gallery. Under every architecture diagram, a **review** points out
-shared databases, hotspots, cycles, long call chains and missing gateways, and one click asks the
-model for a deeper review. The **Guide** tab lists what Archify can do as prompts to copy.
+Or skip the typing: in the **Archify panel**, pick a diagram type (and a project folder to draw
+from its code) and press **Generate**. The plugin scans the repository, starts the conversation and
+shows its progress, and the page lands in the panel's gallery. There, **Edit** changes a diagram
+through the conversation that drew it, and **Review** has the model review an architecture from its
+code, every point citing the lines it rests on, checked by the plugin.
 
 ```
 > 画一下这个仓库的运行时架构图
