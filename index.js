@@ -27,7 +27,7 @@ import { MAX_FINDINGS, checkReview } from './lib/critique.mjs';
 import { EXAMPLES, examplePage, previewFile } from './lib/examples.mjs';
 import { createJobs } from './lib/jobs.mjs';
 import { NATIVE_TYPES, TYPES, planPaths, resolveFrom, titleOf, withOutput } from './lib/paths.mjs';
-import { PICKABLE, generationPrompt, reviewPrompt, typeName } from './lib/prompts.mjs';
+import { PICKABLE, editPrompt, generationPrompt, reviewPrompt, typeName } from './lib/prompts.mjs';
 import { describeChanges, sanitize } from './lib/sanitize.mjs';
 import { scanRepo } from './lib/scan.mjs';
 import { createStore, newId } from './lib/store.mjs';
@@ -89,6 +89,7 @@ const JOBS_ROUTE = '/__dsh_archify/jobs';
 const DISMISS_ROUTE = '/__dsh_archify/jobs/dismiss';
 const REVIEW_ROUTE = '/__dsh_archify/review';
 const ASK_ROUTE = '/__dsh_archify/ask';
+const EDIT_ROUTE = '/__dsh_archify/edit';
 const PREVIEW_ROUTE = '/__dsh_archify/preview';
 const EXAMPLE_ROUTE = '/__dsh_archify/example';
 
@@ -803,6 +804,24 @@ export function createRunner(ctx, { jobs, store, workdir }) {
         return { ok: false, reason: String(error?.message ?? error), job: jobs.get(job.id) };
       }
     },
+    /** A change to a delivered page, in the conversation that drew it (which knows its context), or a new one beside it. */
+    async edit(body) {
+      const item = store.get(String(body.id ?? ''));
+      if (!item) return { ok: false, reason: 'missing' };
+      const instruction = String(body.text ?? '').trim().slice(0, 4000);
+      if (!instruction) return { ok: false, reason: 'empty' };
+      const lang = body.lang === 'zh' ? 'zh' : 'en';
+      const text = editPrompt({ lang, title: item.title, type: item.type, candidate: item.candidate, output: item.html, instruction });
+      const job = jobs.create({ kind: 'edit', type: item.type, dir: item.cwd, focus: instruction.slice(0, 120), title: `Archify · ${lang === 'zh' ? '改图' : 'edit'} · ${item.title}`, pageId: item.id });
+      try {
+        const sessionId = await send({ text, title: job.title, dir: item.cwd, sessionId: item.sessionId });
+        jobs.update(job.id, { sessionId, state: 'running', activity: 'thinking', seenAt: Date.now() });
+        return { ok: true, job: jobs.get(job.id) };
+      } catch (error) {
+        jobs.update(job.id, { state: 'failed', error: String(error?.message ?? error).slice(0, 300), endedAt: Date.now() });
+        return { ok: false, reason: String(error?.message ?? error), job: jobs.get(job.id) };
+      }
+    },
     /** Ask for a review of a delivered Architecture, in the conversation that drew it when it is still there. */
     async review(body) {
       const item = store.get(String(body.id ?? ''));
@@ -913,6 +932,7 @@ export function apply(ctx, config) {
     );
     scope.effect(() => webServer.register({ kind: 'exact', path: GENERATE_ROUTE, handler: (req, res) => postJson(req, res, answer((body) => runner.generate(body))) }));
     scope.effect(() => webServer.register({ kind: 'exact', path: ASK_ROUTE, handler: (req, res) => postJson(req, res, answer((body) => runner.review(body))) }));
+    scope.effect(() => webServer.register({ kind: 'exact', path: EDIT_ROUTE, handler: (req, res) => postJson(req, res, answer((body) => runner.edit(body))) }));
     scope.effect(() => webServer.register({ kind: 'exact', path: JOBS_ROUTE, handler: (_req, res) => serveJson(res, () => ({ jobs: jobs.list(12) })) }));
     scope.effect(() => webServer.register({ kind: 'exact', path: DISMISS_ROUTE, handler: (req, res) => postJson(req, res, (body) => ({ ok: jobs.remove(String(body.id ?? '')) })) }));
     scope.effect(() =>

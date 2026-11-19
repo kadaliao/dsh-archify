@@ -128,6 +128,25 @@ test('a review goes to the conversation that drew the diagram and asks for one f
   assert.deepEqual(await runner.review({ id: 'nope' }), { ok: false, reason: 'missing' });
 });
 
+test('an edit goes to the conversation that drew the page, naming its files', async () => {
+  const { ctx, seen } = fakeHarness({ existing: ['s-old'] });
+  const cache = mkdtempSync(join(tmpdir(), 'archify-cache-'));
+  const store = createStore(cache);
+  const item = store.put({ id: 'i1', type: 'sequence', title: 'Login', html: '/w/.archify/s/login.html', candidate: '/w/.archify/s/candidate.json', cwd: '/w', sessionId: 's-old', updatedAt: 1 });
+  const jobs = createJobs(cache);
+  const runner = createRunner(ctx, { jobs, store, workdir: join(cache, 'work') });
+  assert.deepEqual(await runner.edit({ id: item.id, text: '   ' }), { ok: false, reason: 'empty' });
+  const r = await runner.edit({ id: item.id, text: '只保留主流程', lang: 'zh' });
+  assert.equal(r.ok, true);
+  assert.equal(r.job.kind, 'edit');
+  assert.equal(seen.sent[0].sessionId, 's-old');
+  const text = seen.sent[0].message.content[0].text;
+  assert.match(text, /^请修改已经画好的时序图「Login」：只保留主流程/);
+  assert.match(text, /图的数据在 \/w\/\.archify\/s\/candidate\.json，页面在 \/w\/\.archify\/s\/login\.html/);
+  assert.match(text, /archify_render 传 candidate 重新渲染/);
+  assert.deepEqual(await runner.edit({ id: 'nope', text: 'x' }), { ok: false, reason: 'missing' });
+});
+
 test('archify_review keeps a review only when every point\'s citations check out', async () => {
   const dir = gitRepo();
   mkdirSync(join(dir, 'src'));

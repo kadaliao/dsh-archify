@@ -439,26 +439,10 @@ test('Gallery shows the model\'s checked review beside the drawing, with the cod
   findAll(cite, (n) => n.type === 'button')[0].props.onClick(ev);
   tree = render();
   assert.match(text(by(tree, 'data-dsh-archify-cite', 'Islander/MenuBarScanner.swift:40–52')[0]).join(''), /CGWindowListCopyWindowInfo/);
-  // Closing the sheet leaves the drawing alone.
-  by(tree, 'data-dsh-archify-review-close')[0].props.onClick(ev);
+  // Closing the side panel leaves the drawing alone.
+  by(tree, 'data-dsh-archify-side-close')[0].props.onClick(ev);
   tree = render();
-  assert.equal(by(tree, 'data-dsh-archify-review-sheet').length, 0);
-});
-
-test('Guide lists prompts to copy, and Use fills the New form', async () => {
-  const { render } = panelHarness({ '/__dsh_archify/list': { items: [], total: 0, hasMore: false } });
-  let tree = render();
-  await flush();
-  tree = render();
-  by(tree, 'data-dsh-archify-tab', 'guide')[0].props.onClick(ev);
-  tree = render();
-  assert.equal(tree.props['data-dsh-archify-view'], 'guide');
-  assert.ok(by(tree, 'data-dsh-archify-prompt').length >= 8);
-  by(tree, 'data-dsh-archify-use', 'erd')[0].props.onClick(ev);
-  tree = render();
-  assert.equal(tree.props['data-dsh-archify-view'], 'new');
-  assert.match(by(tree, 'data-dsh-archify-focus')[0].props.value, /博客系统/);
-  assert.equal(by(tree, 'data-dsh-archify-type', 'erd')[0].props.style.border.includes('var(--dsw-alias-brand-primary)'), true);
+  assert.equal(by(tree, 'data-dsh-archify-side-sheet').length, 0);
 });
 
 test('every word the client uses is in both dictionaries', async () => {
@@ -471,7 +455,6 @@ test('every word the client uses is in both dictionaries', async () => {
   for (const s of ['starting', 'running', 'done', 'ended', 'failed']) used.add(`state.${s}`);
   for (const l of ['risk', 'warn', 'info', 'good']) used.add(`level.${l}`);
   for (const k of ['auto', 'architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle', 'erd', 'class', 'tree', 'timeline', 'waterfall', 'explainer']) used.add(`use.${k}`);
-  for (const k of ['code', 'mermaid', 'edit', 'compare', 'explainer', 'brands', 'review', 'viewer']) used.add(`guide.${k}`).add(`guide.${k}.note`);
   const { activityOf } = await import('../lib/jobs.mjs');
   for (const name of ['archify_render', 'archify_scan', 'load_skill', 'edit', 'read']) used.add(`act.${activityOf(name)}`);
   for (const key of used) {
@@ -515,53 +498,70 @@ test('a wide New keeps the preview beside the form, following the pointer, and f
   assert.match(text(by(side(), 'data-dsh-archify-prompt-preview')[0]).join(''), /prompt for \/nope/);
 });
 
-test('the Guide\'s table of contents follows the scroll, and holds a clicked section until the person scrolls', async () => {
-  const { render } = panelHarness({ '/__dsh_archify/list': { items: [], total: 0, hasMore: false } });
+
+
+test('the "?" card says what can be done and jumps to where it is done', async () => {
+  const items = [
+    { id: 'w1', type: 'workflow', title: 'Release', path: '/w/r.html', folder: '/w/.archify/workflow-r-1', version: 'v1', aspect: 0.5, updatedAt: Date.now() },
+    { id: 'a1', type: 'architecture', title: 'Islander', path: '/w/i.html', folder: '/w/.archify/architecture-i-1', version: 'v1', aspect: 0.6, updatedAt: Date.now() - 1000 },
+  ];
+  const { render } = panelHarness({
+    '/__dsh_archify/list': { items, total: 2, hasMore: false },
+    '/__dsh_archify/review': { supported: true, basis: 'code', repo: 'islander', review: null },
+  });
   let tree = render();
   await flush();
   tree = render();
-  by(tree, 'data-dsh-archify-panel')[0].props.ref.current = { clientWidth: 1200 };
+  // No Guide tab: two tabs, and a "?".
+  assert.deepEqual(by(tree, 'data-dsh-archify-tab').map((n) => n.props['data-dsh-archify-tab']), ['new', 'gallery']);
+  by(tree, 'data-dsh-archify-help-open')[0].props.onClick(ev);
   tree = render();
+  const card = by(tree, 'data-dsh-archify-quick-help')[0];
+  assert.deepEqual(by(card, 'data-dsh-archify-help').map((n) => n.props['data-dsh-archify-help']), ['new', 'chat', 'mermaid', 'edit', 'review', 'view', 'explainer', 'rules']);
+  // Explainers: to New with the type chosen.
+  by(tree, 'data-dsh-archify-help-go', 'new:explainer')[0].props.onClick(ev);
   tree = render();
-  by(tree, 'data-dsh-archify-tab', 'guide')[0].props.onClick(ev);
+  assert.equal(tree.props['data-dsh-archify-view'], 'new');
+  assert.equal(by(tree, 'data-dsh-archify-quick-help').length, 0, 'the card closes');
+  assert.match(by(tree, 'data-dsh-archify-type', 'explainer')[0].props.style.border, /brand-primary/, 'the explainer type is chosen');
+  assert.match(text(by(tree, 'data-dsh-archify-rules-hint')[0]).join(''), /\[archify explainer: proactive\]/);
+  // Review: to the Gallery, an architecture selected, its review open beside it.
+  by(tree, 'data-dsh-archify-help-open')[0].props.onClick(ev);
   tree = render();
-  const keys = ['types', 'code', 'mermaid', 'edit', 'compare', 'explainer', 'brands', 'review', 'viewer'];
-  // A stand-in scroll box: section i starts at 600·i px; the view is 800 px tall, the content 5600.
-  const box = {
-    scrollTop: 0,
-    clientHeight: 800,
-    scrollHeight: 5600,
-    getBoundingClientRect: () => ({ top: 0 }),
-    querySelectorAll: () => nodes,
-    querySelector: (sel) => nodes.find((n) => sel.includes(`"${n.key}"`)),
-    scrollTo({ top }) {
-      this.scrollTop = top;
-    },
-  };
-  const nodes = keys.map((key, i) => ({ key, getAttribute: () => key, getBoundingClientRect: () => ({ top: 600 * i - box.scrollTop }) }));
-  const guide = () => by(tree, 'data-dsh-archify-guide')[0];
-  guide().props.ref.current = box;
-  const active = () => by(tree, 'data-active', 'yes').map((n) => n.props['data-dsh-archify-toc']);
-  assert.deepEqual(active(), ['types']);
-  // Scrolling down highlights the section at the top of the view.
-  box.scrollTop = 1250;
-  guide().props.onScroll();
+  by(tree, 'data-dsh-archify-help-go', 'gallery:review')[0].props.onClick(ev);
   tree = render();
-  assert.deepEqual(active(), ['mermaid']);
-  // A click jumps there and holds, even when the page ends below it.
-  by(tree, 'data-dsh-archify-toc', 'review')[0].props.onClick(ev);
+  await flush();
   tree = render();
-  assert.deepEqual(active(), ['review']);
-  assert.equal(box.scrollTop, 600 * 7 - 14);
-  box.scrollTop = 4800;
-  guide().props.onScroll();
+  assert.equal(tree.props['data-dsh-archify-view'], 'gallery');
+  assert.equal(by(tree, 'data-dsh-archify-side-panel')[0].props['data-dsh-archify-side-panel'], 'review');
+  assert.ok(by(tree, 'data-dsh-archify-review', 'a1')[0], 'the architecture is the one shown');
+});
+
+test('Edit sends a change to the conversation that drew the diagram, from a suggestion or own words', async () => {
+  const item = { id: 'w1', type: 'workflow', title: 'Release', path: '/w/r.html', folder: '/w/.archify/workflow-r-1', version: 'v1', aspect: 0.5, sessionId: 's1', updatedAt: Date.now() };
+  const { calls, render } = panelHarness({
+    '/__dsh_archify/list': { items: [item], total: 1, hasMore: false },
+    '/__dsh_archify/edit': (b) => ({ ok: true, job: { id: 'e1', kind: 'edit', pageId: b.id, focus: b.text, state: 'running', activity: 'editing', steps: 1, pages: [], startedAt: Date.now(), sessionId: 's1' } }),
+  });
+  let tree = render();
+  await flush();
   tree = render();
-  assert.deepEqual(active(), ['review'], 'the smooth scroll does not move the highlight');
-  // Scrolling by hand lets it follow again: at the bottom, the last section.
-  guide().props.onWheel();
-  guide().props.onScroll();
+  // A workflow has no review: only Edit.
+  assert.equal(by(tree, 'data-dsh-archify-to-review').length, 0);
+  by(tree, 'data-dsh-archify-to-edit', 'w1')[0].props.onClick(ev);
   tree = render();
-  assert.deepEqual(active(), ['viewer']);
-  // Every use is a card of its own.
-  assert.equal(findAll(tree, (n) => n.type === 'section' && n.props['data-dsh-archify-guide-section']).length, keys.length);
+  assert.ok(by(tree, 'data-dsh-archify-side-sheet', 'w1')[0], 'the panel slides over the drawing');
+  assert.deepEqual(by(tree, 'data-dsh-archify-side-tab').map((n) => n.props['data-dsh-archify-side-tab']), ['edit']);
+  const send = () => by(tree, 'data-dsh-archify-edit-send', 'w1')[0];
+  assert.equal(send().props.disabled, true, 'nothing to send yet');
+  // A suggestion fills the box, to adjust before sending.
+  by(tree, 'data-dsh-archify-edit-chip')[0].props.onClick(ev);
+  tree = render();
+  assert.equal(by(tree, 'data-dsh-archify-edit-text')[0].props.value, '整理一下布局，减少交叉和绕线');
+  send().props.onClick(ev);
+  await flush();
+  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/edit').body, { id: 'w1', text: '整理一下布局，减少交叉和绕线', lang: 'zh' });
+  tree = render();
+  assert.match(text(by(tree, 'data-dsh-archify-job', 'e1')[0]).join(''), /修改候选图/);
+  assert.equal(send().props.disabled, true, 'one change at a time');
 });

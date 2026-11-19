@@ -74,7 +74,7 @@ Each page is a standalone HTML file that works offline, so you can send it to so
 
 ## The Archify panel
 
-**Archify** in the left sidebar (or `/archify`) has three tabs.
+**Archify** in the left sidebar (or `/archify`) has two tabs, **New** and **Gallery**, and a **?**.
 
 **New** draws a diagram without writing a prompt:
 
@@ -122,10 +122,17 @@ description, with no code behind it, gets a review of its design, every point na
 components it is about. Whether each argument holds is still yours to judge: the citations are
 there so you can. The conversation card of an architecture diagram has a **Review** button that opens it here.
 
-**Guide**, with a table of contents on the left that follows the scroll and sections set apart as cards, lists the ten diagram types with a picture (click it for the live example), what each is
-for and an example request (**Use** fills the New form), then what else Archify does as prompts to copy or open in a new conversation: drawing from
-your code, converting Mermaid, changing a diagram, before/after comparison pages, one-page
-explainers, brand marks, reviews, and what the viewer inside a page can do.
+**Edit**, in the same header, changes the diagram without leaving the panel: say what to change, or
+start from a suggestion (tidy the layout, another style, the text in another language, brand marks,
+split or merge parts, a before/after comparison page). It goes to the conversation that drew the
+diagram, which knows its context, and the page here updates when it is done. Edit and Review sit
+beside the drawing: docked on a wide screen, over its right side on a narrower one.
+
+There is no separate help page. Each hint sits where it is used: in New, that Mermaid can be pasted
+as is and, for an explainer, the rules line for pages without asking; in the Gallery, the
+suggestions for a change; in full screen, the reader's shortcuts the first few times. **?** next to
+the panel's tabs opens a short card: the ways to start a diagram, what can be done with one you
+have, and explainers, each with a button to where it is done.
 
 ## Fast by default
 
