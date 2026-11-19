@@ -329,7 +329,7 @@ window.__ModuleLoader__.load({
           item.type === 'architecture' && typeof panelOpener.fn === 'function'
             ? h(ToolButton, {
                 onClick: () => {
-                  requestPage(item.id);
+                  requestPage(item.id, { review: true });
                   panelOpener.fn();
                 },
                 title: t('reviewInPanel'),
@@ -846,19 +846,80 @@ window.__ModuleLoader__.load({
       return h('div', { 'data-dsh-archify-jobs': true, style: { display: 'flex', flexDirection: 'column', gap: 6 } }, shown.map((job) => h(JobRow, { key: job.id, t, job, env, onShowPage, onDismiss })));
     }
 
+    /** A numbered step of a form. */
+    function Step({ n, title, aside, children }) {
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 9 } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('span', { style: { width: 20, height: 20, borderRadius: 10, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: C.label, background: 'color-mix(in srgb, currentColor 12%, transparent)' } }, String(n)),
+          h('span', { style: { fontSize: SMALL, fontWeight: 650, color: C.primary } }, title),
+          aside ? h('span', { style: { fontSize: 11.5, color: C.faint } }, aside) : null,
+        ),
+        h('div', { style: { paddingLeft: 28, display: 'flex', flexDirection: 'column', gap: 8 } }, children),
+      );
+    }
+
+    /** What the chosen (or pointed-at) type looks like, with its live example a click away. */
+    function TypePreview({ t, type, onOpen, compact }) {
+      if (type === 'auto') {
+        return h(
+          'div',
+          { 'data-dsh-archify-example': 'auto', style: { padding: 12, borderRadius: 12, background: C.layer1, border: `1px solid ${C.border1}`, display: 'flex', flexDirection: 'column', gap: 8 } },
+          h(Thumb, { type: 'auto', height: compact ? 120 : 200 }),
+          h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('type.auto')),
+          h('span', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, t('use.auto')),
+        );
+      }
+      return h(
+        'div',
+        { 'data-dsh-archify-example': type, style: { padding: 12, borderRadius: 12, background: C.layer1, border: `1px solid ${C.border1}`, display: 'flex', flexDirection: compact ? 'row' : 'column', gap: compact ? 14 : 10, alignItems: compact ? 'center' : 'stretch', flexWrap: 'wrap' } },
+        h('div', { style: compact ? { width: 280, maxWidth: '100%' } : {} }, h(Thumb, { type, height: compact ? 160 : 230, fit: 'contain', onClick: () => onOpen(type), title: t('seeExample') })),
+        h(
+          'div',
+          { style: { flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', gap: 6 } },
+          h('span', { style: { fontSize: SMALL, fontWeight: 650 } }, t('looksLike', { type: typeLabel(t, type) })),
+          h('span', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, t(`use.${type}`)),
+          h('div', { style: { marginTop: 2 } }, h(Btn, { onClick: () => onOpen(type), 'data-dsh-archify-see-example': type }, h(ExpandIcon, { size: 14 }), t('seeExample'))),
+        ),
+      );
+    }
+
+    /** The prompt that will be sent, as the plugin composes it. */
+    function PromptPreview({ t, text: prompt, scanned, onClose, maxHeight = 260 }) {
+      return h(
+        'div',
+        { 'data-dsh-archify-prompt-preview': true, style: { padding: '10px 12px', borderRadius: 12, background: C.layer1, border: `1px solid ${C.border1}`, display: 'flex', flexDirection: 'column', gap: 8 } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('span', { style: { fontSize: SMALL, fontWeight: 650, flex: 1 } }, t('promptTitle')),
+          h(ToolButton, { onClick: () => copyText(prompt), title: t('copyPrompt'), icon: h(CopyIcon) }),
+          onClose ? h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }) }) : null,
+        ),
+        h('pre', { 'data-dsh-archify-preview-prompt': true, style: { margin: 0, maxHeight, overflow: 'auto', fontSize: 11.5, lineHeight: 1.6, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text', fontFamily: 'inherit' } }, prompt || '…'),
+        scanned ? h('span', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.5 } }, t('scanNote')) : null,
+      );
+    }
+
     /** New: a project folder or a description, a type, a focus; then one click. */
-    function NewView({ t, env, jobs, onJob, onShowPage, onDismiss, seed }) {
+    function NewView({ t, env, jobs, onJob, onShowPage, onDismiss, seed, wide }) {
       const lang = langOf(t);
       const [mode, setMode] = useState(seed?.mode ?? 'repo');
       const [dir, setDir] = useState(seed?.dir ?? '');
       const [type, setType] = useState(seed?.type ?? 'architecture');
+      const [hover, setHover] = useState('');
       const [focus, setFocus] = useState(seed?.focus ?? '');
       const [quality, setQuality] = useState('showcase');
       const [preview, setPreview] = useState('');
+      const [folderError, setFolderError] = useState('');
       const [showPrompt, setShowPrompt] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState('');
       const [copied, setCopied] = useState(false);
+      const [example, setExample] = useState('');
       const seedKey = useRef(seed?.at ?? 0);
       // A Guide example or a gallery action fills the form.
       if (seed && seed.at !== seedKey.current) {
@@ -870,18 +931,20 @@ window.__ModuleLoader__.load({
       }
       const folder = mode === 'repo' ? dir.trim() : '';
       const body = { dir: folder, type, focus, quality, lang };
-      const ready = mode === 'repo' ? folder !== '' : focus.trim() !== '';
+      const ready = (mode === 'repo' ? folder !== '' : focus.trim() !== '') && !(mode === 'repo' && folderError);
 
-      // The prompt as it will be sent, shown on request.
+      // The prompt as it will be sent, and whether the folder is there, follow the form as it changes.
       useEffect(() => {
-        if (!showPrompt) return undefined;
         const timer = setTimeout(() => {
-          void postJson(PROMPT_ROUTE, body)
-            .then((r) => setPreview(r?.ok ? r.prompt : r?.reason ? `(${r.reason})` : ''))
+          void postJson(PROMPT_ROUTE, { ...body, lenient: true })
+            .then((r) => {
+              setPreview(r?.ok ? r.prompt : r?.reason ? `(${r.reason})` : '');
+              setFolderError(r?.folderError ?? '');
+            })
             .catch(() => setPreview(''));
-        }, 250);
+        }, 300);
         return () => clearTimeout(timer);
-      }, [showPrompt, mode, dir, type, focus, quality, lang]);
+      }, [mode, dir, type, focus, quality, lang]);
 
       const promptNow = () => postJson(PROMPT_ROUTE, body).then((r) => (r?.ok ? r.prompt : Promise.reject(new Error(r?.reason || t('actionFailed')))));
       const generate = () => {
@@ -926,17 +989,38 @@ window.__ModuleLoader__.load({
           );
       };
 
-      const [example, setExample] = useState('');
       const recent = (env?.workspaces?.() ?? []).filter((w) => w.path).slice(0, 8);
       const examples = (EXAMPLES[lang] ?? EXAMPLES.en)[type]?.[mode === 'repo' ? 'repo' : 'desc'] ?? [];
       const canRun = env?.canRun?.() !== false;
+      const shownType = hover || type;
+      const mine = (jobs ?? []).filter((j) => j.kind === 'diagram');
+      const latest = mine[0];
 
-      return h(
-        'div',
-        { 'data-dsh-archify-new': true, style: { display: 'flex', flexDirection: 'column', gap: 18, padding: '18px 22px 48px', maxWidth: 880 } },
+      const typeCard = (k) =>
         h(
-          Section,
-          { title: t('newWhat') },
+          'button',
+          {
+            key: k,
+            type: 'button',
+            'data-dsh-archify-type': k,
+            onClick: () => setType(k),
+            onMouseEnter: () => setHover(k),
+            onMouseLeave: () => setHover(''),
+            onFocus: () => setHover(k),
+            onBlur: () => setHover(''),
+            title: t(`use.${k}`),
+            style: { textAlign: 'left', font: 'inherit', padding: 5, borderRadius: 10, cursor: 'pointer', background: type === k ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent)' : C.layer1, border: `1px solid ${type === k ? C.label : C.border1}`, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 },
+          },
+          h(Thumb, { type: k, height: 62 }),
+          h('span', { style: { fontSize: 12.5, fontWeight: 620, color: type === k ? C.label : C.primary, padding: '0 3px 1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, k === 'auto' ? t('type.auto') : typeLabel(t, k)),
+        );
+
+      const form = h(
+        'div',
+        { style: { flex: 1, minWidth: 0, maxWidth: wide ? 640 : 'none', display: 'flex', flexDirection: 'column', gap: 22 } },
+        h(
+          Step,
+          { n: 1, title: t('newWhat') },
           h(
             'div',
             { style: { display: 'flex', gap: 6 } },
@@ -953,6 +1037,7 @@ window.__ModuleLoader__.load({
                   h('input', { type: 'text', value: dir, placeholder: t('folderPlaceholder'), spellCheck: false, onChange: (e) => setDir(e.target.value), 'data-dsh-archify-folder': true, style: { ...fieldStyle, flex: 1, minWidth: 0, fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 12 } }),
                   env?.canPickDirectory?.() ? h(Btn, { onClick: pick, 'data-dsh-archify-pick': true }, h(FolderIcon, { size: 14 }), t('pickFolder')) : null,
                 ),
+                folder && folderError ? h('span', { 'data-dsh-archify-folder-error': true, style: { fontSize: 12, color: C.error } }, t('folderMissing')) : null,
                 recent.length > 0
                   ? h(
                       'div',
@@ -965,59 +1050,28 @@ window.__ModuleLoader__.load({
             : null,
         ),
         h(
-          Section,
-          { title: t('newType') },
-          h(
-            'div',
-            { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 10 } },
-            PICKABLE.map((k) =>
-              h(
-                'button',
-                {
-                  key: k,
-                  type: 'button',
-                  'data-dsh-archify-type': k,
-                  onClick: () => setType(k),
-                  style: { textAlign: 'left', font: 'inherit', padding: 7, borderRadius: 11, cursor: 'pointer', background: type === k ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent)' : C.layer1, border: `1px solid ${type === k ? C.label : C.border1}`, display: 'flex', flexDirection: 'column', gap: 4 },
-                },
-                h(Thumb, { type: k, height: 92 }),
-                h('span', { style: { fontSize: SMALL, fontWeight: 620, color: type === k ? C.label : C.primary, padding: '2px 4px 0' } }, k === 'auto' ? t('type.auto') : typeLabel(t, k)),
-                h('span', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.4, padding: '0 4px 2px' } }, t(`use.${k}`)),
-              ),
-            ),
-          ),
-          type !== 'auto'
-            ? h(
-                'div',
-                { 'data-dsh-archify-example': type, style: { display: 'flex', gap: 14, alignItems: 'flex-start', padding: 10, borderRadius: 12, background: C.layer1, border: `1px solid ${C.border1}`, flexWrap: 'wrap' } },
-                h('div', { style: { width: 360, maxWidth: '100%' } }, h(Thumb, { type, height: 220, fit: 'contain', onClick: () => setExample(type), title: t('seeExample') })),
-                h(
-                  'div',
-                  { style: { flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4 } },
-                  h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('looksLike', { type: typeLabel(t, type) })),
-                  h('span', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, t(`use.${type}`)),
-                  h('span', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, t('exampleNote')),
-                  h('div', null, h(Btn, { onClick: () => setExample(type), 'data-dsh-archify-see-example': type }, h(ExpandIcon, { size: 14 }), t('seeExample'))),
-                ),
-              )
-            : null,
+          Step,
+          { n: 2, title: t('newType'), aside: wide ? t('typeHint') : null },
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: 8 } }, PICKABLE.map(typeCard)),
+          // Narrow: the preview comes right under the cards, where the click was.
+          wide ? null : h(TypePreview, { t, type: shownType, onOpen: setExample, compact: true }),
         ),
         h(
-          Section,
-          { title: mode === 'repo' ? t('newFocusRepo') : t('newFocusDescribe'), aside: mode === 'repo' ? t('optional') : null },
+          Step,
+          { n: 3, title: mode === 'repo' ? t('newFocusRepo') : t('newFocusDescribe'), aside: mode === 'repo' ? t('optional') : null },
           h('textarea', { value: focus, rows: mode === 'repo' ? 2 : 4, placeholder: examples[0] ?? '', onChange: (e) => setFocus(e.target.value), 'data-dsh-archify-focus': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
           examples.length > 0
             ? h(
                 'div',
                 { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
                 h('span', { style: { fontSize: 11.5, color: C.faint } }, t('examples')),
-                examples.map((ex) => h(Chip, { key: ex, title: ex, onClick: () => setFocus(ex) }, ex.length > 42 ? `${ex.slice(0, 41)}…` : ex)),
+                examples.map((ex) => h(Chip, { key: ex, on: focus === ex, title: ex, onClick: () => setFocus(ex) }, ex.length > 40 ? `${ex.slice(0, 39)}…` : ex)),
               )
             : null,
         ),
         h(
-          Section,
-          { title: t('newQuality') },
+          Step,
+          { n: 4, title: t('newQuality') },
           h(
             'div',
             { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
@@ -1026,34 +1080,84 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontSize: 11.5, color: C.faint } }, quality === 'standard' ? t('qualityStandardHint') : t('qualityShowcaseHint')),
           ),
         ),
+      );
+
+      // Wide: what the form will do stays in view beside it.
+      const side = wide
+        ? h(
+            'div',
+            { 'data-dsh-archify-side': true, style: { width: 380, flex: 'none', position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', gap: 12 } },
+            h(TypePreview, { t, type: shownType, onOpen: setExample }),
+            showPrompt ? h(PromptPreview, { t, text: preview, scanned: mode === 'repo', onClose: () => setShowPrompt(false) }) : null,
+            mine.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, h('span', { style: { fontSize: 11.5, color: C.faint, fontWeight: 600 } }, t('runs')), h(Jobs, { t, jobs: mine, env, onShowPage, onDismiss })) : null,
+          )
+        : null;
+
+      const hint = error
+        ? h('span', { style: { fontSize: 12, color: C.error } }, error)
+        : !ready
+          ? h('span', { style: { fontSize: 12, color: mode === 'repo' && folderError && folder ? C.error : C.faint } }, mode === 'repo' ? (folderError && folder ? t('folderMissing') : t('needFolder')) : t('needFocus'))
+          : null;
+      const footer = h(
+        'div',
+        { 'data-dsh-archify-actions': true, style: { flex: 'none', borderTop: `1px solid ${C.border1}`, background: C.base, padding: '10px 22px 12px', display: 'flex', flexDirection: 'column', gap: 8 } },
+        // Narrow: the prompt and the latest run show here, above the buttons, where they are seen.
+        !wide && showPrompt ? h(PromptPreview, { t, text: preview, scanned: mode === 'repo', onClose: () => setShowPrompt(false), maxHeight: 160 }) : null,
+        !wide && latest ? h(JobRow, { t, job: latest, env, onShowPage, onDismiss }) : null,
         h(
           'div',
           { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
           h(Btn, { kind: 'primary', onClick: generate, disabled: !ready || busy || !canRun, 'data-dsh-archify-generate': true, title: canRun ? t('generateHint') : t('cannotRun') }, h(ArchifyGlyph, { size: 14 }), busy ? t('starting') : t('generate')),
           env?.canDraft?.() ? h(Btn, { onClick: openDraft, disabled: !ready, 'data-dsh-archify-draft': true, title: t('openInChatHint') }, h(ChatIcon, { size: 14 }), t('openInChat')) : null,
           h(Btn, { onClick: copy, disabled: !ready }, h(CopyIcon, { size: 14 }), copied ? t('copied') : t('copyPrompt')),
+          hint,
           h('span', { style: { flex: 1 } }),
-          h('button', { type: 'button', onClick: () => setShowPrompt((v) => !v), style: { font: 'inherit', fontSize: 12, color: C.faint, background: 'none', border: 'none', cursor: 'pointer', padding: 0 } }, `${showPrompt ? '▾' : '▸'} ${t('showPrompt')}`),
+          h('button', { type: 'button', 'data-dsh-archify-prompt-toggle': true, onClick: () => setShowPrompt((v) => !v), style: { font: 'inherit', fontSize: 12, color: showPrompt ? C.primary : C.faint, background: 'none', border: 'none', cursor: 'pointer', padding: 0 } }, showPrompt ? t('hidePrompt') : t('showPrompt')),
         ),
-        error ? h('div', { style: { fontSize: 12.5, color: C.error } }, error) : null,
-        !ready ? h('div', { style: { fontSize: 12, color: C.faint } }, mode === 'repo' ? t('needFolder') : t('needFocus')) : null,
-        showPrompt ? h('pre', { 'data-dsh-archify-preview-prompt': true, style: { margin: 0, maxHeight: 300, overflow: 'auto', fontSize: 11.5, lineHeight: 1.55, padding: '10px 12px', borderRadius: 8, background: C.layer2, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' } }, preview || '…') : null,
-        mode === 'repo' && showPrompt ? h('div', { style: { fontSize: 11.5, color: C.faint } }, t('scanNote')) : null,
-        h(Jobs, { t, jobs, env, onShowPage, onDismiss, kind: 'diagram' }),
+      );
+
+      return h(
+        'div',
+        { 'data-dsh-archify-new': true, style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h('div', { style: { display: 'flex', gap: 28, padding: '20px 22px 28px', alignItems: 'flex-start' } }, form, side)),
+        footer,
         example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
       );
     }
 
     /** Guide: what Archify can do, each as a prompt to copy or open in a conversation. */
-    function GuideView({ t, env, onUse }) {
+    function GuideView({ t, env, onUse, wide }) {
       const lang = langOf(t);
       const sections = GUIDE[lang] ?? GUIDE.en;
       const [example, setExample] = useState('');
+      const jump = (key) => {
+        try {
+          document.querySelector(`[data-dsh-archify-guide-section="${key}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch {
+          // Scrolling is a convenience.
+        }
+      };
+      const toc = wide
+        ? h(
+            'nav',
+            { 'data-dsh-archify-guide-toc': true, style: { width: 170, flex: 'none', position: 'sticky', top: 18, display: 'flex', flexDirection: 'column', gap: 2 } },
+            [['types', t('guide.types')], ...sections.map((x) => [x.key, t(`guide.${x.key}`)])].map(([key, label]) =>
+              h('button', { key, type: 'button', 'data-dsh-archify-toc': key, onClick: () => jump(key), style: { font: 'inherit', fontSize: 12.5, textAlign: 'left', color: C.muted, background: 'none', border: 'none', borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }, onMouseEnter: (e) => (e.currentTarget.style.background = C.hover), onMouseLeave: (e) => (e.currentTarget.style.background = 'none') }, label),
+            ),
+          )
+        : null;
       return h(
         'div',
-        { 'data-dsh-archify-guide': true, style: { display: 'flex', flexDirection: 'column', gap: 22, padding: '18px 22px 48px', maxWidth: 880 } },
+        { 'data-dsh-archify-guide': true, style: { display: 'flex', gap: 28, padding: '18px 22px 48px', alignItems: 'flex-start' } },
+        toc,
+        h(
+          'div',
+          { style: { flex: 1, minWidth: 0, maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 26 } },
         h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7 } }, t('guideIntro')),
         h(
+          'div',
+          { 'data-dsh-archify-guide-section': 'types' },
+          h(
           Section,
           { title: t('guide.types') },
           h(
@@ -1074,10 +1178,14 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
+        ),
         sections.map((s) =>
           h(
+            'div',
+            { key: s.key, 'data-dsh-archify-guide-section': s.key },
+            h(
             Section,
-            { key: s.key, title: t(`guide.${s.key}`) },
+            { title: t(`guide.${s.key}`) },
             s.pic
               ? h(
                   'div',
@@ -1088,6 +1196,8 @@ window.__ModuleLoader__.load({
               : h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${s.key}.note`)),
             s.prompts.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, s.prompts.map((p) => h(PromptLine, { key: p, t, text: p, env }))) : null,
           ),
+          ),
+        ),
         ),
         example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
       );
@@ -1105,20 +1215,9 @@ window.__ModuleLoader__.load({
     }
 
     /** Review: the plugin's structural checks of a drawn architecture, and the model's deeper review. */
-    function ReviewBox({ t, item, env, jobs, onJob }) {
-      const [data, setData] = useState(null);
+    function ReviewBox({ t, item, env, jobs, onJob, side, data, onClose }) {
       const [asking, setAsking] = useState(false);
       const [error, setError] = useState('');
-      useEffect(() => {
-        let alive = true;
-        setData(null);
-        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(item.id)}`)
-          .then((r) => alive && setData(r ?? { supported: false, findings: [] }))
-          .catch(() => alive && setData({ supported: false, findings: [] }));
-        return () => {
-          alive = false;
-        };
-      }, [item.id, item.version]);
       const job = (jobs ?? []).find((j) => j.kind === 'review' && j.pageId === item.id);
       const ask = () => {
         setAsking(true);
@@ -1135,13 +1234,18 @@ window.__ModuleLoader__.load({
       const s = data?.summary;
       return h(
         'div',
-        { 'data-dsh-archify-review': item.id, style: { marginTop: 14, border: `1px solid ${C.border1}`, borderRadius: 12, background: C.layer1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { 'data-dsh-archify-review': item.id, style: side === 'sheet' ? { height: '100%', overflowY: 'auto', boxSizing: 'border-box', background: C.base, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 } : { border: `1px solid ${C.border1}`, borderRadius: 12, background: C.layer1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 } },
         h(
           'div',
           { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
           h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('reviewTitle')),
-          s ? h('span', { style: { fontSize: 11.5, color: C.faint } }, t('reviewSummary', { components: s.components, connections: s.connections, async: s.async, boundaries: s.boundaries })) : null,
           h('span', { style: { flex: 1 } }),
+          onClose ? h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }), 'data-dsh-archify-review-close': true }) : null,
+        ),
+        s ? h('span', { style: { fontSize: 11.5, color: C.faint } }, t('reviewSummary', { components: s.components, connections: s.connections, async: s.async, boundaries: s.boundaries })) : null,
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
           job && live(job)
             ? h('span', { style: { fontSize: 12, color: C.faint } }, `${t(`act.${job.activity || 'thinking'}`)} · ${elapsed(job)}`)
             : h(Btn, { onClick: ask, disabled: asking || env?.canRun?.() === false, 'data-dsh-archify-ask': item.id, title: t('askReviewHint') }, h(ChatIcon, { size: 14 }), job ? t('askAgain') : t('askReview')),
@@ -1171,10 +1275,10 @@ window.__ModuleLoader__.load({
     }
 
     /** A request from outside the panel (a card's Review button) to show one page. */
-    const panelRequests = { pending: '', listeners: new Set() };
-    function requestPage(id) {
-      panelRequests.pending = id;
-      for (const fn of panelRequests.listeners) fn(id);
+    const panelRequests = { pending: null, listeners: new Set() };
+    function requestPage(id, { review = false } = {}) {
+      panelRequests.pending = { id, review };
+      for (const fn of panelRequests.listeners) fn(panelRequests.pending);
     }
 
     function ArchifyPanel(props) {
@@ -1190,6 +1294,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('');
       const [jobs, setJobs] = useState([]);
       const [seed, setSeed] = useState(null);
+      const [reviewOpen, setReviewOpen] = useState(false);
       const [, setTick] = useState(0);
       const alive = useRef(true);
       const itemsRef = useRef(items);
@@ -1198,6 +1303,18 @@ window.__ModuleLoader__.load({
       jobsRef.current = jobs;
       const pane = useRef(null);
       const [paneW, setPaneW] = useState(0);
+      const root = useRef(null);
+      const [rootW, setRootW] = useState(0);
+      useEffect(() => {
+        const el = root.current;
+        if (!el) return undefined;
+        setRootW(el.clientWidth);
+        if (typeof ResizeObserver !== 'function') return undefined;
+        const ro = new ResizeObserver(() => setRootW(el.clientWidth));
+        ro.observe(el);
+        return () => ro.disconnect();
+      }, []);
+      const wide = rootW >= 920;
 
       const refresh = () =>
         getJson(`${LIST_ROUTE}?limit=${PAGE}`)
@@ -1270,12 +1387,13 @@ window.__ModuleLoader__.load({
             setTick((n) => n + 1);
           }
         }, 2000);
-        const onRequest = (id) => showPage(id);
+        const onRequest = (req) => {
+          showPage(req.id);
+          if (req.review) setReviewOpen(true);
+          panelRequests.pending = null;
+        };
         panelRequests.listeners.add(onRequest);
-        if (panelRequests.pending) {
-          showPage(panelRequests.pending);
-          panelRequests.pending = '';
-        }
+        if (panelRequests.pending) onRequest(panelRequests.pending);
         return () => {
           alive.current = false;
           clearInterval(timer);
@@ -1309,6 +1427,23 @@ window.__ModuleLoader__.load({
               sessions.open(current.sessionId);
             }
           : undefined;
+
+      const [review, setReview] = useState(null);
+      const reviewKey = current && current.type === 'architecture' && !current.missing ? `${current.id}:${current.version}` : '';
+      useEffect(() => {
+        let alive = true;
+        setReview(null);
+        if (!reviewKey) return undefined;
+        const id = reviewKey.split(':')[0];
+        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(id)}`)
+          .then((r) => alive && setReview({ key: reviewKey, ...(r ?? { supported: false, findings: [] }) }))
+          .catch(() => alive && setReview({ key: reviewKey, supported: false, findings: [] }));
+        return () => {
+          alive = false;
+        };
+      }, [reviewKey]);
+      const reviewData = review && review.key === reviewKey ? review : null;
+      const concerns = (reviewData?.findings ?? []).filter((f) => f.level !== 'good').length;
 
       const remove = (item) => {
         setItems((list) => (list ?? []).filter((i) => i.id !== item.id));
@@ -1363,9 +1498,9 @@ window.__ModuleLoader__.load({
 
       let body;
       if (view === 'new') {
-        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(NewView, { t, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob, seed }));
+        body = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } }, h(NewView, { t, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob, seed, wide }));
       } else if (view === 'guide') {
-        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(GuideView, { t, env, onUse: use }));
+        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(GuideView, { t, env, onUse: use, wide }));
       } else if (failed) body = h('div', { style: { padding: 24, color: C.faint } }, t('unavailable'));
       else if (items === null) body = h('div', { style: { padding: 24, color: C.faint } }, '…');
       else if (items.length === 0)
@@ -1392,7 +1527,7 @@ window.__ModuleLoader__.load({
               const el = e.currentTarget;
               if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore();
             },
-            style: { width: 300, flex: 'none', overflowY: 'auto', borderRight: `1px solid ${C.border1}`, padding: '8px 8px 40px' },
+            style: { width: wide ? 300 : 240, flex: 'none', overflowY: 'auto', borderRight: `1px solid ${C.border1}`, padding: '8px 8px 40px' },
           },
           shown.map((item) => {
             const on = current && item.id === current.id;
@@ -1430,12 +1565,15 @@ window.__ModuleLoader__.load({
         const preview = current
           ? h(
               'div',
-              { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' } },
+              { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' } },
               h(
                 'div',
                 { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px 8px 16px', borderBottom: `1px solid ${C.border1}`, minWidth: 0 } },
                 h('span', { title: current.path, style: { fontSize: SMALL, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 } }, current.title),
                 openSession ? h(ToolButton, { onClick: openSession, title: t('openSession'), icon: h(ChatIcon) }) : null,
+                reviewKey && !(paneW >= 1100)
+                  ? h(Btn, { kind: reviewOpen ? 'primary' : 'plain', onClick: () => setReviewOpen((v) => !v), 'data-dsh-archify-to-review': current.id, title: t('reviewOpenHint') }, h(ReviewIcon, { size: 14 }), reviewData?.supported ? t('reviewCount', { n: concerns }) : t('reviewTitle'))
+                  : null,
                 current.missing ? null : h(PageActions, { t, item: current, onExpand: () => setFull(true), compact: paneW < 620 }),
                 h(ToolButton, { onClick: () => remove(current), title: t('remove'), icon: h(TrashIcon) }),
               ),
@@ -1443,12 +1581,29 @@ window.__ModuleLoader__.load({
                 'div',
                 { ref: pane, style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 } },
                 jobs.some(live) ? h('div', { style: { marginBottom: 12 } }, h(Jobs, { t, jobs: jobs.filter(live), env, onShowPage: showPage, onDismiss: dismissJob })) : null,
-                current.missing
-                  ? h('div', { style: { color: C.faint, padding: 12 } }, t('missingLong', { path: current.path }))
-                  : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34, title: current.title })),
-                h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
-                current.type === 'architecture' && !current.missing ? h(ReviewBox, { t, item: current, env, jobs, onJob: addJob }) : null,
+                (() => {
+                  const reviewed = Boolean(reviewKey);
+                  const besides = reviewed && paneW >= 1100;
+                  const drawing = h(
+                    'div',
+                    { style: { flex: 1, minWidth: 0 } },
+                    current.missing
+                      ? h('div', { style: { color: C.faint, padding: 12 } }, t('missingLong', { path: current.path }))
+                      : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? 356 : 0), title: current.title })),
+                    h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
+                  );
+                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, h('div', { style: { width: 340, flex: 'none', position: 'sticky', top: 0 } }, h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'docked', data: reviewData })));
+                  return drawing;
+                })(),
               ),
+              // A narrower pane: the review is a sheet over the right of the drawing, opened from the header.
+              reviewKey && reviewOpen && !(paneW >= 1100)
+                ? h(
+                    'div',
+                    { 'data-dsh-archify-review-sheet': current.id, style: { position: 'absolute', top: 45, right: 0, bottom: 0, width: Math.min(400, Math.max(300, Math.round(paneW * 0.48))), borderLeft: `1px solid ${C.border1}`, boxShadow: '-12px 0 28px rgba(0,0,0,.10)', zIndex: 5 } },
+                    h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'sheet', data: reviewData, onClose: () => setReviewOpen(false) }),
+                  )
+                : null,
             )
           : h('div', { style: { flex: 1, padding: 24, color: C.faint } }, t('noMatch'));
         body = h('div', { style: { flex: 1, minHeight: 0, display: 'flex' } }, list, preview);
@@ -1456,7 +1611,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { 'data-dsh-archify-panel': true, 'data-dsh-archify-view': view, style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: C.base, color: C.primary, fontSize: FONT, boxSizing: 'border-box' } },
+        { ref: root, 'data-dsh-archify-panel': true, 'data-dsh-archify-view': view, 'data-dsh-archify-wide': wide ? 'yes' : 'no', style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: C.base, color: C.primary, fontSize: FONT, boxSizing: 'border-box' } },
         h('style', null, '@keyframes dsh-archify-pulse{0%,100%{opacity:1}50%{opacity:.35}}'),
         header,
         body,
@@ -1551,7 +1706,7 @@ window.__ModuleLoader__.load({
         "openInChat": "Open in a conversation",
         "openInChatHint": "A new conversation in that folder with this prompt in the composer, for you to send",
         "copyPrompt": "Copy the prompt",
-        "showPrompt": "The prompt",
+        "showPrompt": "Show the prompt",
         "needFolder": "Pick or type the project folder.",
         "needFocus": "Describe what to draw, or pick an example.",
         "scanNote": "Generate also attaches the plugin's scan of the repository (folders, manifests, deployment files, Git revision), so the model skips listing it.",
@@ -1636,6 +1791,13 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "Asynchronous work goes through {bus}, so producers and consumers are decoupled.",
         "reviewInPanel": "Review this architecture (Archify panel)",
         "scanned": "scanned {root}",
+        "folderMissing": "There is no folder at this path.",
+        "reviewCount": "Review · {n}",
+        "reviewOpenHint": "The structural review of this architecture, beside the drawing",
+        "typeHint": "point at a card to see it on the right",
+        "promptTitle": "The prompt that will be sent",
+        "hidePrompt": "Hide the prompt",
+        "runs": "Runs",
         "exampleOf": "{type}: an example",
         "looksLike": "What a {type} looks like",
         "seeExample": "Open the full example",
@@ -1724,7 +1886,7 @@ window.__ModuleLoader__.load({
         "openInChat": "在对话中打开",
         "openInChatHint": "在那个文件夹开一个新会话，提示词填进输入框，你确认后发送",
         "copyPrompt": "复制提示词",
-        "showPrompt": "提示词",
+        "showPrompt": "查看提示词",
         "needFolder": "选择或输入项目文件夹。",
         "needFocus": "描述要画什么，或者点一个例子。",
         "scanNote": "点「生成」时会附上插件对仓库的扫描（目录、清单、部署文件、Git 版本），模型不用再逐个列目录。",
@@ -1809,6 +1971,13 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "异步工作经由 {bus}，生产者和消费者是解耦的。",
         "reviewInPanel": "点评这张架构图（Archify 面板）",
         "scanned": "已扫描 {root}",
+        "folderMissing": "这个路径下没有文件夹。",
+        "reviewCount": "点评 · {n}",
+        "reviewOpenHint": "在图旁边打开这张架构图的结构点评",
+        "typeHint": "鼠标移到卡片上，右边就显示它的样子",
+        "promptTitle": "将要发送的提示词",
+        "hidePrompt": "收起提示词",
+        "runs": "运行记录",
         "exampleOf": "{type}示例",
         "looksLike": "{type}长这样",
         "seeExample": "看完整示例",

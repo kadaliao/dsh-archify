@@ -698,10 +698,19 @@ export function createRunner(ctx, { jobs, store, workdir }) {
   return {
     /** The prompt for a new diagram (with the repository's scan when `scanned`). */
     async prompt(body, { scanned = false } = {}) {
-      const dir = folderOf(body.dir);
+      // A preview of a folder that is not there yet still shows its prompt, with the reason beside it.
+      let dir;
+      let folderError = '';
+      try {
+        dir = folderOf(body.dir);
+      } catch (error) {
+        if (!body.lenient) throw error;
+        dir = String(body.dir ?? '').trim();
+        folderError = String(error?.message ?? error);
+      }
       const type = PICKABLE.includes(body.type) ? body.type : 'auto';
-      const digest = dir && scanned ? (await scanRepo(dir)).text : '';
-      return { dir, type, prompt: generationPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', type, focus: String(body.focus ?? ''), dir, quality: body.quality === 'standard' ? 'standard' : 'showcase', digest }) };
+      const digest = dir && scanned && !folderError ? (await scanRepo(dir)).text : '';
+      return { dir, type, ...(folderError ? { folderError } : {}), prompt: generationPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', type, focus: String(body.focus ?? ''), dir, quality: body.quality === 'standard' ? 'standard' : 'showcase', digest: folderError ? '' : digest }) };
     },
     /** Start a new diagram in a conversation of its own. */
     async generate(body) {

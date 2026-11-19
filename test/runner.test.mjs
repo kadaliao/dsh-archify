@@ -69,6 +69,11 @@ test('Generate starts a conversation in the project\'s workspace with the prompt
   assert.equal(d.ok, true);
   assert.equal(seen.workspaces.at(-1).path, join(cache, 'work'));
   assert.match(seen.sent.at(-1).message.content[0].text, /draw a sequence diagram: OAuth login/);
+  // A folder that is not there: the preview still shows a prompt, with the reason; a run refuses it.
+  const lenient = await runner.prompt({ dir: '/no/such/folder', type: 'erd', lang: 'en', lenient: true });
+  assert.match(lenient.folderError, /not a folder/);
+  assert.match(lenient.prompt, /\/no\/such\/folder/);
+  await assert.rejects(runner.prompt({ dir: '/no/such/folder', type: 'erd' }), /not a folder/);
   // The copyable prompt carries no scan.
   const p = await runner.prompt({ dir, type: 'erd', lang: 'en' });
   assert.match(p.prompt, /Start with archify_scan/);

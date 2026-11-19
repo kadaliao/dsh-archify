@@ -52,9 +52,20 @@ function fakeReact() {
       return [slots[index], (value) => (slots[index] = typeof value === 'function' ? value(slots[index]) : value)];
     },
     cleanups: [],
-    useEffect(effect) {
-      top().cursor++;
+    /**
+     * Runs again when its dependencies change, as React's does. React attaches refs before
+     * effects run and this stand-in cannot, so an effect that bailed out (no cleanup returned,
+     * as when its ref was not there yet) also runs again on the next render.
+     */
+    useEffect(effect, deps) {
+      const f = top();
+      const index = f.cursor++;
+      const prev = f.slots[index];
+      const changed = !prev || typeof prev.cleanup !== 'function' || !Array.isArray(deps) || !Array.isArray(prev.deps) || deps.length !== prev.deps.length || deps.some((d, i) => !Object.is(d, prev.deps[i]));
+      if (!changed) return;
+      if (typeof prev?.cleanup === 'function') prev.cleanup();
       const cleanup = effect();
+      f.slots[index] = { deps, cleanup };
       if (typeof cleanup === 'function') hooks.cleanups.push(cleanup);
     },
     runCleanups() {
@@ -383,6 +394,12 @@ test('Gallery reviews an architecture in the reader\'s language and asks the mod
   await flush();
   tree = render();
   assert.equal(tree.props['data-dsh-archify-view'], 'gallery');
+  // The header says how many points want a look; the review opens beside the drawing.
+  const toReview = by(tree, 'data-dsh-archify-to-review', 'p1')[0];
+  assert.match(text(toReview).join(''), /点评 · 2/);
+  toReview.props.onClick(ev);
+  tree = render();
+  assert.ok(by(tree, 'data-dsh-archify-review-sheet', 'p1')[0], 'the sheet is open');
   const findings = by(tree, 'data-dsh-archify-finding');
   assert.deepEqual(findings.map((f) => f.props['data-dsh-archify-finding']), ['shared-store', 'deep-chain', 'async-decoupling']);
   assert.match(text(findings[0]).join(''), /风险.*3 个服务直接用同一个数据存储「DB」（A、B、C）/);
@@ -393,6 +410,10 @@ test('Gallery reviews an architecture in the reader\'s language and asks the mod
   assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh' });
   tree = render();
   assert.equal(by(tree, 'data-dsh-archify-ask').length, 0, 'the running review replaces the button');
+  // Closing the sheet leaves the drawing alone.
+  by(tree, 'data-dsh-archify-review-close')[0].props.onClick(ev);
+  tree = render();
+  assert.equal(by(tree, 'data-dsh-archify-review-sheet').length, 0);
 });
 
 test('Guide lists prompts to copy, and Use fills the New form', async () => {
@@ -430,4 +451,39 @@ test('every word the client uses is in both dictionaries', async () => {
     assert.ok(key in en, `en: ${key}`);
     assert.ok(key in zh, `zh: ${key}`);
   }
+});
+
+test('a wide New keeps the preview beside the form, following the pointer, and flags a missing folder at once', async () => {
+  const { render } = panelHarness({
+    '/__dsh_archify/list': { items: [], total: 0, hasMore: false },
+    '/__dsh_archify/prompt': (b) => ({ ok: true, prompt: `prompt for ${b.dir}`, ...(b.dir === '/nope' ? { folderError: 'not a folder: /nope' } : {}) }),
+  });
+  let tree = render();
+  await flush();
+  tree = render();
+  // The panel measures itself: wide.
+  by(tree, 'data-dsh-archify-panel')[0].props.ref.current = { clientWidth: 1200 };
+  tree = render();
+  tree = render();
+  assert.equal(tree.props['data-dsh-archify-wide'], 'yes');
+  const side = () => by(tree, 'data-dsh-archify-side')[0];
+  assert.ok(side(), 'the side column is there');
+  assert.equal(by(side(), 'data-dsh-archify-example')[0].props['data-dsh-archify-example'], 'architecture');
+  by(tree, 'data-dsh-archify-type', 'timeline')[0].props.onMouseEnter();
+  tree = render();
+  assert.equal(by(side(), 'data-dsh-archify-example')[0].props['data-dsh-archify-example'], 'timeline', 'it follows the pointer');
+  by(tree, 'data-dsh-archify-type', 'timeline')[0].props.onMouseLeave();
+  tree = render();
+  assert.equal(by(side(), 'data-dsh-archify-example')[0].props['data-dsh-archify-example'], 'architecture', 'and goes back to the chosen type');
+  // A folder that is not there is said under the field, and Generate waits for a real one.
+  by(tree, 'data-dsh-archify-folder')[0].props.onChange({ target: { value: '/nope' } });
+  tree = render();
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  tree = render();
+  assert.ok(by(tree, 'data-dsh-archify-folder-error')[0], 'the folder is flagged');
+  assert.equal(by(tree, 'data-dsh-archify-generate')[0].props.disabled, true);
+  // The prompt opens beside the form, not below it.
+  by(tree, 'data-dsh-archify-prompt-toggle')[0].props.onClick(ev);
+  tree = render();
+  assert.match(text(by(side(), 'data-dsh-archify-prompt-preview')[0]).join(''), /prompt for \/nope/);
 });

@@ -87,6 +87,12 @@ Each page is a standalone HTML file that works offline, so you can send it to so
    examples per type are one click away.
 4. **Quality**: **Fine** runs Archify's full `showcase` checks, **Fast** its `standard` profile.
 
+On a wide panel, the right side keeps what the form will do in view: the picture of the type you
+chose (or point at), the prompt when you ask to see it, and your runs. **Generate**, **Open in a
+conversation** and **Copy the prompt** stay pinned at the bottom, and a folder that is not there is
+flagged as you type. On a narrow panel the picture comes right under the type cards, and the prompt
+and the latest run show in the bottom bar.
+
 **Generate** starts a conversation of its own (in the project's workspace, so it shows in the
 sidebar) and sends the prompt, with the plugin's scan of the repository attached so the model does
 not have to list folders first. The run is listed under the form with what it is doing (reading,
@@ -98,7 +104,9 @@ and **Copy the prompt** copies it for any conversation.
 to preview it; from there open it full screen, in the browser, in its folder, or go back to the
 conversation it was drawn in. **Remove** only takes it off the list; the file stays.
 
-Under an architecture diagram, **Review** reads the system the drawing describes: a data store
+For an architecture diagram, **Review** in the header (it counts the points worth a look) opens the
+review beside the drawing; on a wide screen it stays docked there. It reads the system the drawing
+describes: a data store
 several services share, a client reaching a database directly, a client calling many services with
 no gateway in front, a part everything depends on, a synchronous dependency cycle, a call chain of
 five hops or more, external services on the call path, no authentication or network boundary,
@@ -108,7 +116,7 @@ the code: each one is a question to check. **Ask the model to review** sends the
 to the conversation that drew it, for a verdict, the main risks, concrete suggestions and strengths.
 The conversation card of an architecture diagram has a **Review** button that opens it here.
 
-**Guide** lists the ten diagram types with a picture (click it for the live example), what each is
+**Guide**, with a table of contents on the left, lists the ten diagram types with a picture (click it for the live example), what each is
 for and an example request (**Use** fills the New form), then what else Archify does as prompts to copy or open in a new conversation: drawing from
 your code, converting Mermaid, changing a diagram, before/after comparison pages, one-page
 explainers, brand marks, reviews, and what the viewer inside a page can do.
