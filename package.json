@@ -1,8 +1,8 @@
 {
   "name": "@kadaliao/dsh-archify",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "Archify for DeepSeek Harness: ask for an architecture, workflow, sequence, data-flow, state, ER, class, tree, timeline or waterfall diagram, or a one-page explainer, and get a checked interactive page right in the conversation. Bundles the Archify skill, lays architecture diagrams out automatically, and renders with the Harness's own runtime, no Node.js install needed.",
+  "description": "Archify for DeepSeek Harness: ask for an architecture, workflow, sequence, data-flow, state, ER, class, tree, timeline or waterfall diagram, or a one-page explainer, and get a checked, interactive page in the conversation. Or start one from the Archify panel: pick a project folder and a type, and the plugin scans the repository and draws it. Architecture diagrams are laid out by the plugin and come with a structural review; schema slips and repository evidence are fixed before checking, so the first render usually passes.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -18,6 +18,7 @@
     "vendor/elkjs/*",
     "cordis.patch.yml",
     "locale/*.json",
+    "assets/previews/*.webp",
     "icon.svg",
     "README.md",
     "README.zh-CN.md",
@@ -61,6 +62,9 @@
     "sequence-diagram",
     "erd",
     "skill",
-    "auto-layout"
+    "auto-layout",
+    "architecture-review",
+    "code-map",
+    "repository-scan"
   ]
 }

@@ -11,32 +11,49 @@ afterEach(() => {
   for (const hooks of allHooks.splice(0)) hooks.runCleanups();
 });
 
-/** A hook-capable stand-in for React that renders plain element trees. */
+/**
+ * A hook-capable stand-in for React that renders plain element trees. Each
+ * component instance keeps its own hooks (by its place in the tree), and one a
+ * render no longer reaches is dropped at the next, as React unmounts it.
+ */
 function fakeReact() {
-  let slots = [];
-  let cursor = 0;
+  const root = { key: 'root', slots: [], cursor: 0, kids: 0 };
+  const frames = new Map();
+  const visited = new Set();
+  let stack = [root];
+  const top = () => stack[stack.length - 1];
   const hooks = {
     reset() {
-      slots = [];
-      cursor = 0;
+      frames.clear();
+      visited.clear();
+      root.slots = [];
+      root.cursor = 0;
+      root.kids = 0;
+      stack = [root];
     },
     /** Render again with the state kept. */
     rerender() {
-      cursor = 0;
+      for (const key of [...frames.keys()]) if (!visited.has(key)) frames.delete(key);
+      visited.clear();
+      root.cursor = 0;
+      root.kids = 0;
     },
     useRef(initial) {
-      const index = cursor++;
-      if (!(index in slots)) slots[index] = { current: initial };
-      return slots[index];
+      const f = top();
+      const index = f.cursor++;
+      if (!(index in f.slots)) f.slots[index] = { current: initial };
+      return f.slots[index];
     },
     useState(initial) {
-      const index = cursor++;
+      const f = top();
+      const index = f.cursor++;
+      const slots = f.slots;
       if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
       return [slots[index], (value) => (slots[index] = typeof value === 'function' ? value(slots[index]) : value)];
     },
     cleanups: [],
     useEffect(effect) {
-      cursor++;
+      top().cursor++;
       const cleanup = effect();
       if (typeof cleanup === 'function') hooks.cleanups.push(cleanup);
     },
@@ -46,7 +63,18 @@ function fakeReact() {
   };
   const createElement = (type, props, ...children) => {
     const kids = children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false);
-    if (typeof type === 'function') return type({ ...(props ?? {}), ...(kids.length ? { children: kids.length === 1 ? kids[0] : kids } : {}) });
+    if (typeof type === 'function') {
+      const parent = top();
+      const key = `${parent.key}/${type.name || 'anonymous'}:${props?.key ?? parent.kids++}`;
+      if (!frames.has(key)) frames.set(key, []);
+      visited.add(key);
+      stack.push({ key, slots: frames.get(key), cursor: 0, kids: 0 });
+      try {
+        return type({ ...(props ?? {}), ...(kids.length ? { children: kids.length === 1 ? kids[0] : kids } : {}) });
+      } finally {
+        stack.pop();
+      }
+    }
     return { type, props: props ?? {}, children: kids };
   };
   allHooks.push(hooks);
@@ -57,6 +85,8 @@ function loadClient() {
   const { React, hooks } = fakeReact();
   let factory;
   globalThis.window = {
+    addEventListener() {},
+    removeEventListener() {},
     __ModuleLoader__: {
       load({ id, factory: make }) {
         assert.equal(id, '@kadaliao/dsh-archify');
@@ -72,9 +102,9 @@ function loadClient() {
   return { exports, hooks };
 }
 
-function fakeContext() {
+function fakeContext(extra = {}) {
   const seen = { slots: [], locale: null, decorations: [], selected: [], definitions: [] };
-  const all = { layout: { selectPanel: (id) => seen.selected.push(id) } };
+  const all = { layout: { selectPanel: (id) => seen.selected.push(id) }, ...extra };
   const ctx = {
     get: (name) => all[name],
     inject(names, callback) {
@@ -137,6 +167,7 @@ test('the client registers both tool views, the page row, the panel and /archify
     [
       ['tool.call.toolview', 'archify_render'],
       ['tool.call.toolview', 'archify_cli'],
+      ['tool.call.toolview', 'archify_scan'],
       ['conversation.chat.node', 'archify-page'],
       ['sidebar.panellist', 'archify'],
       ['main', 'archify'],
@@ -148,7 +179,7 @@ test('the client registers both tool views, the page row, the panel and /archify
   assert.equal(decoration.name, 'archify');
   decoration.ui.run({});
   assert.deepEqual(seen.selected, ['archify']);
-  assert.equal(seen.slots[3].component({ size: 20 }).props.width, 20);
+  assert.equal(seen.slots.find((x) => x.options.name === 'sidebar.panellist').component({ size: 20 }).props.width, 20);
 });
 
 test('a delivered page becomes a turn-level row; failures and other tools do not', () => {
@@ -247,4 +278,156 @@ test('the CLI card shows the command and its exit code', () => {
   const words = text(tree).join(' ');
   assert.match(words, /archify guide checkout --json/);
   assert.match(words, /exit 0/);
+});
+
+// --- the panel --------------------------------------------------------------------------
+
+function stubFetch(routes) {
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ url: String(url), method: init.method ?? 'GET', body });
+    const reply = routes[String(url).split('?')[0]];
+    const value = typeof reply === 'function' ? reply(body, String(url)) : reply;
+    return { ok: value !== undefined, json: async () => value };
+  };
+  return calls;
+}
+afterEach(() => {
+  delete globalThis.fetch;
+});
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const ev = { stopPropagation() {}, currentTarget: { style: {} } };
+const by = (tree, attr, value) => findAll(tree, (n) => n.props?.[attr] !== undefined && (value === undefined || n.props[attr] === value));
+
+function panelHarness(routes, services = {}) {
+  const calls = stubFetch({ '/__dsh_archify/jobs': { jobs: [] }, '/__dsh_archify/state': { canRun: true }, ...routes });
+  const { exports, hooks } = loadClient();
+  const { ctx, seen } = fakeContext(services);
+  exports.apply(ctx);
+  const Panel = seen.slots.find((x) => x.options.name === 'main').component;
+  const dict = seen.locale.dict.zh;
+  const t = (key, params) => (dict[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => String(params?.[k] ?? ''));
+  const render = () => {
+    hooks.rerender();
+    return Panel({ t });
+  };
+  return { calls, render, seen };
+}
+
+test('New starts a diagram from a folder and a type in one click, and follows its run', async () => {
+  let started = 0;
+  const workspaces = { list: { getSnapshot: () => ({ items: [{ workspaceId: 'w1', path: '/code/shop', displayTitle: 'shop' }] }) } };
+  const { calls, render } = panelHarness(
+    {
+      '/__dsh_archify/list': { items: [], total: 0, hasMore: false },
+      '/__dsh_archify/generate': (b) => ({ ok: true, job: { id: 'j1', kind: 'diagram', type: b.type, dir: b.dir, state: 'running', activity: 'scanning', steps: 2, pages: [], startedAt: Date.now() - 5000, sessionId: 's1' } }),
+    },
+    { workspaces, uiWorkspace: { startSession: () => (started += 1), openSession: () => {} } },
+  );
+  let tree = render();
+  await flush();
+  tree = render();
+  // An empty gallery opens on New.
+  assert.equal(tree.props['data-dsh-archify-view'], 'new');
+  const generate = () => by(tree, 'data-dsh-archify-generate')[0];
+  assert.equal(generate().props.disabled, true, 'no folder yet');
+  // A recent workspace is one click away.
+  const recent = findAll(tree, (n) => n.type === 'button' && n.props.title === '/code/shop')[0];
+  recent.props.onClick(ev);
+  tree = render();
+  by(tree, 'data-dsh-archify-type', 'sequence')[0].props.onClick(ev);
+  tree = render();
+  by(tree, 'data-dsh-archify-focus')[0].props.onChange({ target: { value: '用户登录' } });
+  tree = render();
+  assert.equal(generate().props.disabled, false);
+  generate().props.onClick(ev);
+  await flush();
+  const sent = calls.find((c) => c.url === '/__dsh_archify/generate');
+  assert.deepEqual(sent.body, { dir: '/code/shop', type: 'sequence', focus: '用户登录', quality: 'showcase', lang: 'zh' });
+  tree = render();
+  const row = by(tree, 'data-dsh-archify-job', 'j1')[0];
+  assert.ok(row, 'the run is listed');
+  assert.match(text(row).join(' '), /时序图.*shop.*扫描仓库/);
+  // Every card shows what its type looks like, and the chosen one opens its live example.
+  assert.equal(findAll(tree, (n) => n.type === 'img' && /\/__dsh_archify\/preview\/sequence-(light|dark)\.webp$/.test(n.props.src)).length >= 2, true);
+  by(tree, 'data-dsh-archify-see-example', 'sequence')[0].props.onClick(ev);
+  tree = render();
+  const frame = findAll(tree, (n) => n.type === 'iframe')[0];
+  assert.match(frame.props.src, /^\/__dsh_archify\/example\/sequence\?/);
+  assert.match(text(by(tree, 'data-dsh-archify-fullscreen', 'example-sequence')[0]).join(''), /时序图示例/);
+  // A described subject needs a description, not a folder.
+  by(tree, 'data-dsh-archify-mode', 'describe')[0].props.onClick(ev);
+  tree = render();
+  assert.ok(by(tree, 'data-dsh-archify-draft')[0], 'Open in a conversation is offered');
+});
+
+test('Gallery reviews an architecture in the reader\'s language and asks the model for more', async () => {
+  const item = { id: 'p1', type: 'architecture', title: 'Shop', path: '/w/shop.html', folder: '/w/.archify/architecture-shop-1', version: 'v1', aspect: 0.6, sessionId: 's1', updatedAt: Date.now() };
+  const { calls, render } = panelHarness({
+    '/__dsh_archify/list': { items: [item], total: 1, hasMore: false },
+    '/__dsh_archify/review': {
+      supported: true,
+      summary: { components: 6, connections: 7, async: 1, boundaries: 1 },
+      findings: [
+        { code: 'shared-store', level: 'risk', params: { store: 'DB', n: 3, users: ['A', 'B', 'C'] } },
+        { code: 'deep-chain', level: 'warn', params: { hops: 5, path: ['Web', 'API', 'S1', 'S2', 'S3', 'DB'] } },
+        { code: 'async-decoupling', level: 'good', params: { bus: ['Queue'] } },
+      ],
+    },
+    '/__dsh_archify/ask': (b) => ({ ok: true, job: { id: 'r1', kind: 'review', pageId: b.id, state: 'running', activity: 'thinking', steps: 0, pages: [], startedAt: Date.now(), sessionId: 's1' } }),
+  });
+  let tree = render();
+  await flush();
+  tree = render();
+  await flush();
+  tree = render();
+  assert.equal(tree.props['data-dsh-archify-view'], 'gallery');
+  const findings = by(tree, 'data-dsh-archify-finding');
+  assert.deepEqual(findings.map((f) => f.props['data-dsh-archify-finding']), ['shared-store', 'deep-chain', 'async-decoupling']);
+  assert.match(text(findings[0]).join(''), /风险.*3 个服务直接用同一个数据存储「DB」（A、B、C）/);
+  assert.match(text(findings[1]).join(''), /Web → API → S1 → S2 → S3 → DB/);
+  assert.match(text(by(tree, 'data-dsh-archify-review', 'p1')[0]).join(''), /6 个组件 · 7 条连线（1 条异步）· 1 个边界/);
+  by(tree, 'data-dsh-archify-ask', 'p1')[0].props.onClick(ev);
+  await flush();
+  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh' });
+  tree = render();
+  assert.equal(by(tree, 'data-dsh-archify-ask').length, 0, 'the running review replaces the button');
+});
+
+test('Guide lists prompts to copy, and Use fills the New form', async () => {
+  const { render } = panelHarness({ '/__dsh_archify/list': { items: [], total: 0, hasMore: false } });
+  let tree = render();
+  await flush();
+  tree = render();
+  by(tree, 'data-dsh-archify-tab', 'guide')[0].props.onClick(ev);
+  tree = render();
+  assert.equal(tree.props['data-dsh-archify-view'], 'guide');
+  assert.ok(by(tree, 'data-dsh-archify-prompt').length >= 8);
+  by(tree, 'data-dsh-archify-use', 'erd')[0].props.onClick(ev);
+  tree = render();
+  assert.equal(tree.props['data-dsh-archify-view'], 'new');
+  assert.match(by(tree, 'data-dsh-archify-focus')[0].props.value, /博客系统/);
+  assert.equal(by(tree, 'data-dsh-archify-type', 'erd')[0].props.style.border.includes('var(--dsw-alias-brand-primary)'), true);
+});
+
+test('every word the client uses is in both dictionaries', async () => {
+  const { exports } = loadClient();
+  const { ctx, seen } = fakeContext();
+  exports.apply(ctx);
+  const { en, zh } = seen.locale.dict;
+  const used = new Set([...source.matchAll(/\bt\('([\w.-]+)'/g)].map((m) => m[1]));
+  for (const f of ['starting', 'thinking', 'loading', 'scanning', 'reading', 'editing', 'rendering', 'delivered']) used.add(`act.${f}`);
+  for (const s of ['starting', 'running', 'done', 'ended', 'failed']) used.add(`state.${s}`);
+  for (const l of ['risk', 'warn', 'info', 'good']) used.add(`level.${l}`);
+  for (const k of ['auto', 'architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle', 'erd', 'class', 'tree', 'timeline', 'waterfall', 'explainer']) used.add(`use.${k}`);
+  for (const k of ['code', 'mermaid', 'edit', 'compare', 'explainer', 'brands', 'review', 'viewer']) used.add(`guide.${k}`).add(`guide.${k}.note`);
+  const review = readFileSync(join(root, 'lib', 'review.mjs'), 'utf8');
+  for (const [, code] of review.matchAll(/add\('([a-z-]+)'/g)) used.add(`rv.${code}`);
+  const { activityOf } = await import('../lib/jobs.mjs');
+  for (const name of ['archify_render', 'archify_scan', 'load_skill', 'edit', 'read']) used.add(`act.${activityOf(name)}`);
+  for (const key of used) {
+    assert.ok(key in en, `en: ${key}`);
+    assert.ok(key in zh, `zh: ${key}`);
+  }
 });

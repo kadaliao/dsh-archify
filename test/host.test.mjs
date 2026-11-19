@@ -69,6 +69,7 @@ test('the skill provider serves the DeepSeek Harness edition of the skill', asyn
   assert.equal(loaded.locator, undefined);
   assert.match(loaded.content, /archify_render/);
   assert.match(loaded.content, /archify_cli/);
+  assert.match(loaded.content, /archify_scan/);
   assert.doesNotMatch(loaded.content, /^---/);
   // Every reference the edition links to is in the bundled copy.
   for (const [, rel] of loaded.content.matchAll(/\]\(((?:references|schemas|examples)\/[^)#]+)/g)) assert.ok(existsSync(join(SKILL_ROOT, rel)), rel);
@@ -246,7 +247,8 @@ test('helpers: review folders, source detection, Git root, receipts, headers, se
 
   assert.match(PAGE_HEADERS['content-security-policy'], /^sandbox allow-scripts/);
   assert.doesNotMatch(PAGE_HEADERS['content-security-policy'], /allow-same-origin/);
-  assert.deepEqual(settingsOf({ enabled: false, timeoutMs: 5 }), { enabled: false, skill: true, timeoutMs: 240_000 });
+  assert.deepEqual(settingsOf({ enabled: false, timeoutMs: 5 }), { enabled: false, skill: true, timeoutMs: 240_000, workdir: '' });
+  assert.equal(settingsOf({ workdir: ' /tmp/x ' }).workdir, '/tmp/x');
   assert.equal(aspectOf(join(dir, 'none.html')), 0);
   assert.equal(RENDER_TOOL, 'archify_render');
 });

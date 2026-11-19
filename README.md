@@ -11,6 +11,12 @@ for a one-page explainer that answers a question. The conversation model writes 
 Archify JSON, the plugin renders and checks it, and the page appears in the conversation with
 light and dark themes, motion and export.
 
+Or skip the typing: in the **Archify panel**, pick a project folder and a diagram type and press
+**Generate**. The plugin scans the repository, starts the conversation and shows its progress, and
+the page lands in the panel's gallery. Under every architecture diagram, a **review** points out
+shared databases, hotspots, cycles, long call chains and missing gateways, and one click asks the
+model for a deeper review. The **Guide** tab lists what Archify can do as prompts to copy.
+
 ```
 > 画一下这个仓库的运行时架构图
   ▸ Completed in 39s
@@ -68,16 +74,69 @@ Each page is a standalone HTML file that works offline, so you can send it to so
 
 ## The Archify panel
 
-**Archify** in the left sidebar lists every page drawn in your conversations, newest first, with a
-search box. Pick one to preview it; from there open it full screen, in the browser, in its folder,
-or go back to the conversation it was drawn in. **Remove** only takes it off the list; the file
-stays. `/archify` opens the panel.
+**Archify** in the left sidebar (or `/archify`) has three tabs.
+
+**New** draws a diagram without writing a prompt:
+
+1. **What to draw**: a codebase (type its folder, press **Choose…** for the folder dialog, or pick
+   one of your recent workspaces) or a description.
+2. **Diagram type**: one of the ten, an explainer page, or **Best fit** to let the model choose.
+   Each card shows a picture of that kind of diagram and says what it is for; the chosen one is
+   shown large, and **Open the full example** opens Archify's own example of it as a live page.
+3. **Focus** (optional for a codebase, "only the backend services") or the description; a few
+   examples per type are one click away.
+4. **Quality**: **Fine** runs Archify's full `showcase` checks, **Fast** its `standard` profile.
+
+**Generate** starts a conversation of its own (in the project's workspace, so it shows in the
+sidebar) and sends the prompt, with the plugin's scan of the repository attached so the model does
+not have to list folders first. The run is listed under the form with what it is doing (reading,
+rendering…), its steps and time, and a link to the conversation; **Show** opens its page.
+**Open in a conversation** puts the same prompt in a new conversation's composer for you to send,
+and **Copy the prompt** copies it for any conversation.
+
+**Gallery** lists every page drawn in your conversations, newest first, with a search box. Pick one
+to preview it; from there open it full screen, in the browser, in its folder, or go back to the
+conversation it was drawn in. **Remove** only takes it off the list; the file stays.
+
+Under an architecture diagram, **Review** reads the system the drawing describes: a data store
+several services share, a client reaching a database directly, a client calling many services with
+no gateway in front, a part everything depends on, a synchronous dependency cycle, a call chain of
+five hops or more, external services on the call path, no authentication or network boundary,
+nothing that monitors the system, parts with no connection, and what is done well (data owned per
+service, one front door, a queue decoupling the work). These are heuristics over the drawing, not
+the code: each one is a question to check. **Ask the model to review** sends them with the diagram
+to the conversation that drew it, for a verdict, the main risks, concrete suggestions and strengths.
+The conversation card of an architecture diagram has a **Review** button that opens it here.
+
+**Guide** lists the ten diagram types with a picture (click it for the live example), what each is
+for and an example request (**Use** fills the New form), then what else Archify does as prompts to copy or open in a new conversation: drawing from
+your code, converting Mermaid, changing a diagram, before/after comparison pages, one-page
+explainers, brand marks, reviews, and what the viewer inside a page can do.
 
 ## Fast by default
 
 Archify's checks are strict, and repairing a layout is where a model spends its time. The plugin
 keeps that bounded:
 
+- **Schema slips are fixed, not repaired.** Before checking, the tool walks the draft against the
+  diagram type's own schema and fixes what a model gets wrong most: a property the schema does
+  not have, an enum value off by case or a close synonym (`cache` for `database`, `queue` for
+  `messagebus`, `vpc` for `security-group`, `async` for `dashed`), more than three sources, an
+  over-long label, a source given as a bare path. The result lists each change. Each of these used
+  to cost a failed render and a repair round.
+- **A repository in one call.** `archify_scan` gives the model a repository at a glance: Git remote
+  and revision, folders with file counts, languages, manifests and dependencies, Docker Compose
+  services, Dockerfiles, Kubernetes objects, Terraform resources, CI workflows, configuration key
+  names, the README's opening, and a code map: the module graph between folders (which folder
+  imports from which) and, for the key files, what each imports and where its main declarations
+  start, ready to cite. It takes well under a second on a repository of a few thousand files, and
+  saves the model from grepping for imports and paging through big files. A run from the panel
+  attaches it to the prompt.
+- **Source evidence is pinned for the model.** Archify checks a diagram's repository identity
+  strictly (the remote must match `origin`, the commit must exist, web links need the canonical
+  HTTPS address), and getting it right by hand took models several failed renders. The tool writes
+  `meta.repository` from the checkout itself; outside a Git checkout it leaves the sources out and
+  says so, instead of failing.
 - **Architecture diagrams are laid out for the model.** The model writes only the boxes, the
   arrows and the groups; the plugin places them with [ELK](https://github.com/kieler/elkjs)'s
   layered layout (each group kept together, the main path top to bottom), tries four layouts
@@ -96,10 +155,14 @@ keeps that bounded:
 - **Rendering is quick.** A failed validation answers in about a second; a full pass, including
   the real-browser check, takes about three.
 
-In our tests with DeepSeek-V4.1-Flash, an explainer page took about 20 seconds, a sequence diagram
-about 50, an architecture diagram from a description about 20, and one traced from a small
-repository about 40, at Archify's strict `showcase` profile. Before automatic layout, that last
-one took between a minute and a half and four minutes and often ended at `standard`.
+In our tests with DeepSeek-V4.1-Flash, at Archify's strict `showcase` profile (one run each, so
+take the numbers as a guide): an architecture diagram of a described system took about 25 seconds
+(30 with 0.2.0). An architecture diagram traced from a real repository, the Images plugin (seven
+source files, about 4,000 lines), took about 100 seconds in 12 steps with a single render, against
+150 seconds, 24 steps and three renders with 0.2.0, and the model read a third as many tokens. That
+clone's origin was a local folder, which cost 0.2.0's model two failed renders on the repository
+identity that 0.3.0 now fills in. Earlier: an explainer page about 20 seconds, a sequence diagram
+about 50.
 
 ## Where the files go
 
@@ -114,7 +177,9 @@ Each request gets a folder in the conversation's working directory:
 ```
 
 A repair rewrites the same page; a new request gets a new folder. The panel's list lives in
-`~/.dsh/cache/archify/gallery.json`.
+`~/.dsh/cache/archify/gallery.json`, and the runs it started in `jobs.json` beside it. A diagram of
+a description started from the panel is drawn in `~/.dsh/archify/workspace` (the `workdir`
+setting), and the examples the panel opens are rendered once into `~/.dsh/cache/archify/examples/`.
 
 ## What it reads and sends
 
@@ -123,8 +188,14 @@ A repair rewrites the same page; a new request gets a new folder. The panel's li
   would.
 - Rendering runs locally. Archify's update check is turned off: this copy is updated with the
   plugin. Archify goes online only to fetch a brand logo from a URL a diagram names.
-- Nothing is added to what the model reads except the skill (when it loads it) and the tool
-  results.
+- Nothing is added to what the model reads except the skill (when it loads it), the tool results
+  and, for a run you start from the panel, its prompt.
+- `archify_scan` reads names and structure: folders, manifests, Compose, Docker, Kubernetes and
+  Terraform files, workflow names, the README's opening, and only the variable *names* in
+  `.env.example`-style files. It never opens `.env`, prints no value, and strips credentials from
+  the Git remote.
+- The panel's review runs locally on the diagram's JSON. **Ask the model to review** sends a
+  message to a conversation, like one you would type.
 - Pages are served to the Harness page in a sandbox with their own origin: the viewer's scripts
   run, but nothing on a page can reach the Harness or its routes. The routes serve only pages the
   tool delivered.
@@ -133,7 +204,8 @@ A repair rewrites the same page; a new request gets a new folder. The panel's li
 
 | Tool | What it does |
 | --- | --- |
-| `archify_render` | Renders, checks and delivers a page: Archify's `finalize`. Takes `type`, and either `spec` (the JSON, or `markdown` for an explainer) for a new page, or `candidate` (a path) to render an edited draft again. Optional `name`, `quality`, `repoRoot` (defaults to the working directory's Git root when the draft cites source files) and `output`. |
+| `archify_render` | Renders, checks and delivers a page: Archify's `finalize`. Takes `type`, and either `spec` (the JSON, or `markdown` for an explainer) for a new page, or `candidate` (a path) to render an edited draft again. Optional `name`, `quality` (defaults to the draft's `meta.quality_profile`), `relayout`, `repoRoot` (defaults to the working directory's Git root when the draft cites source files) and `output`. |
+| `archify_scan` | A repository at a glance for a diagram of a codebase, with its code map (see above). Optional `path`; its Git root is scanned. |
 | `archify_cli` | Runs any other Archify command (`guide`, `brands`, `compare`, `patch`, `validate`, `visual-check`, `doctor`, …) with the bundled runtime. `preview`, which starts a live server, is refused. |
 
 ## Settings
@@ -145,6 +217,7 @@ On the plugin's row in your profile patch (`cordis.patch.yml`):
 | `enabled` | `true` | `false` offers neither tool to the model. |
 | `skill` | `true` | `false` leaves the `archify` skill out of the catalog. |
 | `timeoutMs` | `240000` | How long one Archify run may take. |
+| `workdir` | `~/.dsh/archify/workspace` | Where a diagram of a description started from the panel is drawn. |
 
 ## If something looks wrong
 
@@ -162,19 +235,27 @@ On the plugin's row in your profile patch (`cordis.patch.yml`):
 - **A dense diagram looks busy.** It was probably delivered at the `standard` profile after the
   repair budget. Ask for a tidy-up, or for a higher-level diagram with fewer nodes.
 - **The panel says a file is gone.** The page was moved or deleted from the working directory.
+- **Generate is greyed out.** This Harness does not let a plugin start conversations; **Open in a
+  conversation** still works.
+- **A run ended without a page.** Open its conversation: the model may be asking you something, or
+  the folder had nothing to draw (it will not invent services an empty folder does not have).
 
 ## Bundled Archify
 
 `archify/` is Archify 3.2.0 from `main` at the commit recorded in
 [`archify/UPSTREAM.json`](https://github.com/kadaliao/dsh-archify/blob/main/archify/UPSTREAM.json), unmodified, minus its tests, pre-rendered example
 pages, generator scripts and lockfile. [`skill/SKILL.md`](https://github.com/kadaliao/dsh-archify/blob/main/skill/SKILL.md) is its `SKILL.md` adapted
-for Harness: the shell commands become the two tools, the update check and setup sections are
+for Harness: the shell commands become the plugin's tools, the update check and setup sections are
 removed, and delivery stops at the first passing page. To refresh the copy from a checkout of
 tt-a1i/archify:
 
 ```bash
 node scripts/sync-archify.mjs /path/to/archify
 ```
+
+`assets/previews/` holds the panel's pictures of each type, light and dark, taken from Archify's own
+examples by `python3 scripts/build-previews.py` (Playwright and Pillow); run it again after
+refreshing the copy.
 
 `vendor/elkjs/` is `lib/elk.bundled.js` from [elkjs](https://github.com/kieler/elkjs) 0.12.1, the
 Eclipse Layout Kernel compiled to JavaScript, unmodified. It loads only in the layout worker, a

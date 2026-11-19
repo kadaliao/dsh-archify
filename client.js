@@ -25,6 +25,16 @@ window.__ModuleLoader__.load({
     const FILE_ROUTE = '/__dsh_archify/file/';
     const DELETE_ROUTE = '/__dsh_archify/delete';
     const OPEN_ROUTE = '/__dsh_archify/open';
+    const PROMPT_ROUTE = '/__dsh_archify/prompt';
+    const GENERATE_ROUTE = '/__dsh_archify/generate';
+    const JOBS_ROUTE = '/__dsh_archify/jobs';
+    const DISMISS_ROUTE = '/__dsh_archify/jobs/dismiss';
+    const REVIEW_ROUTE = '/__dsh_archify/review';
+    const ASK_ROUTE = '/__dsh_archify/ask';
+    const STATE_ROUTE = '/__dsh_archify/state';
+    const PREVIEW_ROUTE = '/__dsh_archify/preview/';
+    const EXAMPLE_ROUTE = '/__dsh_archify/example/';
+    const SCAN_TOOL = 'archify_scan';
     const PAGE = 60;
     const POLL_MS = 5000;
     const SANDBOX = 'allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals';
@@ -47,9 +57,12 @@ window.__ModuleLoader__.load({
     const FONT = 'var(--dsh-content-font-size, 13.5px)';
     const SMALL = 'var(--dsh-content-font-size-secondary, 12.5px)';
 
-    const getJson = (url) => fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null));
+    // Outside a page (a test, a closed window) there is no fetch: nothing to load.
+    const getJson = (url) => (typeof fetch !== 'function' ? Promise.resolve(null) : fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)));
     const postJson = (url, body) =>
-      fetch(url, {
+      typeof fetch !== 'function'
+        ? Promise.resolve(null)
+        : fetch(url, {
         method: 'POST',
         cache: 'no-store',
         credentials: 'same-origin',
@@ -78,7 +91,7 @@ window.__ModuleLoader__.load({
       if (item.version) q.set('v', item.version);
       if (embed) q.set('embed', '1');
       q.set('theme', theme ?? pageTheme());
-      return `${FILE_ROUTE}${encodeURIComponent(item.id)}?${q.toString()}`;
+      return `${item.src ?? `${FILE_ROUTE}${encodeURIComponent(item.id)}`}?${q.toString()}`;
     }
 
     function download(item) {
@@ -143,6 +156,10 @@ window.__ModuleLoader__.load({
     const CloseIcon = ({ size = 16 }) => svg(size, ['M6 6l12 12', 'M18 6L6 18']);
     const ChatIcon = ({ size = 15 }) => svg(size, ['M20 11.5a7.5 7.5 0 0 1-10.9 6.7L4 19.5l1.3-4.6A7.5 7.5 0 1 1 20 11.5z']);
     const TrashIcon = ({ size = 15 }) => svg(size, ['M4 7h16', 'M9 7V4h6v3', 'M6 7l1 13h10l1-13']);
+    const ReviewIcon = ({ size = 15 }) => svg(size, ['M10 6h10', 'M10 12h10', 'M10 18h10', 'M3.5 6l1.5 1.5L7.5 5', 'M3.5 12l1.5 1.5L7.5 11', 'M3.5 18l1.5 1.5L7.5 17']);
+
+    /** Opens the Archify panel; set when the client applies. */
+    const panelOpener = { fn: null };
 
     /** The panel's glyph: a node branching to two. */
     function ArchifyGlyph(props) {
@@ -309,6 +326,17 @@ window.__ModuleLoader__.load({
           h(TypeChip, { t, type: item.type }),
           h('span', { title: item.title, style: { fontSize: SMALL, fontWeight: 600, color: C.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 } }, item.title),
           h(PageActions, { t, item, onExpand: () => setFull(true), compact: width > 0 && width < 560 }),
+          item.type === 'architecture' && typeof panelOpener.fn === 'function'
+            ? h(ToolButton, {
+                onClick: () => {
+                  requestPage(item.id);
+                  panelOpener.fn();
+                },
+                title: t('reviewInPanel'),
+                icon: h(ReviewIcon),
+                'data-dsh-archify-review-open': item.id,
+              })
+            : null,
         ),
         h(
           'div',
@@ -344,7 +372,7 @@ window.__ModuleLoader__.load({
           h('span', { style: { fontWeight: 620, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 } }, item.title),
           onOpenSession ? h(ToolButton, { onClick: onOpenSession, title: t('openSession'), icon: h(ChatIcon), label: t('openSessionShort') }) : null,
           h(ToolButton, { onClick: () => openTab(item), title: t('newTab'), icon: svg(15, ['M4 6h16v12H4z', 'M4 10h16']) }),
-          h(PageActions, { t, item }),
+          item.example ? null : h(PageActions, { t, item }),
           h('span', { style: { width: 1, height: 18, background: C.border1, margin: '0 4px' } }),
           h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 17 }), 'data-dsh-archify-close': true }),
         ),
@@ -509,6 +537,36 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function ScanToolView(props) {
+      const t = typeof props.t === 'function' ? props.t : fallbackT;
+      const { phase, block } = props;
+      const settled = phase === 'result';
+      const meta = settled && block?.meta && typeof block.meta === 'object' ? block.meta : null;
+      const [open, setOpen] = useState(false);
+      const text = settled ? resultText(block) : '';
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, fontSize: SMALL } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, color: C.muted, minWidth: 0 } },
+          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, color: C.faint, fontWeight: 600, flex: 'none' } }, h(ArchifyGlyph, { size: 14 }), t('toolTitle')),
+          h('span', { style: { color: C.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, meta?.root ? t('scanned', { root: String(meta.root).split(/[\\/]/).pop() }) : t('act.scanning')),
+          h('span', { style: { flex: 1 } }),
+          !settled
+            ? h('span', { style: { color: C.faint, fontStyle: 'italic' } }, t('running'))
+            : h(
+                'button',
+                { type: 'button', onClick: () => setOpen((v) => !v), style: { font: 'inherit', fontSize: 12, color: block?.isError ? C.error : C.faint, background: 'none', border: 'none', padding: 0, cursor: 'pointer' } },
+                `${meta?.ms ? fmtMs(meta.ms) : ''} ${open ? '▾' : '▸'}`,
+              ),
+        ),
+        settled && open
+          ? h('pre', { style: { margin: 0, maxHeight: 320, overflow: 'auto', fontSize: 11.5, lineHeight: 1.5, padding: '8px 10px', borderRadius: 8, background: C.layer2, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' } }, text)
+          : null,
+      );
+    }
+
     // --- the page as a row of the conversation -----------------------------------------
     //
     // The tool card lives in the turn's process fold, which closes when the turn
@@ -576,9 +634,552 @@ window.__ModuleLoader__.load({
     }
 
     // --- the panel ---------------------------------------------------------------------
+    //
+    // Three tabs: New (a diagram from a project folder or a description, in one
+    // click), Gallery (every page, with a structural review of an architecture)
+    // and Guide (what Archify does, as prompts to copy).
+
+    const PICKABLE = ['auto', 'architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle', 'erd', 'class', 'tree', 'timeline', 'waterfall', 'explainer'];
+    const langOf = (t) => (typeof t === 'function' && t('lang') === 'zh' ? 'zh' : 'en');
+    const listJoin = (t, xs) => (Array.isArray(xs) ? xs.slice(0, 6).join(langOf(t) === 'zh' ? '、' : ', ') + (xs.length > 6 ? '…' : '') : String(xs ?? ''));
+    const live = (job) => job && (job.state === 'starting' || job.state === 'running');
+    const baseName = (p) => String(p ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p ?? '');
+
+    /** Example focuses per type: for a codebase (`repo`) and for a described subject (`desc`). */
+    const EXAMPLES = {
+      zh: {
+        auto: { repo: ['画出这个仓库的整体结构', '这个项目处理一个请求的完整路径'], desc: ['把下面这段说明画成最合适的图：……'] },
+        architecture: { repo: ['画整体架构，标出对外接口和数据存储', '只画后端服务之间怎么调用', '部署架构：容器、数据库、缓存和外部服务'], desc: ['电商下单系统：Web/App 客户端、API 网关、订单服务、库存服务、支付服务（对接第三方支付）、消息队列、订单库和 Redis 缓存', '家里的网络：光猫、路由器、NAS、电视、手机和笔记本'] },
+        workflow: { repo: ['从提交代码到上线的发布流程（看 CI 配置）', '用户注册的处理流程，包括校验失败和重试'], desc: ['报销审批：员工提交、主管审批（超过 5000 元还要总监审批）、财务打款', '搬家前一个月的准备步骤'] },
+        sequence: { repo: ['用户登录：前端、网关、认证服务、数据库之间的调用和返回', '下单接口的一次请求经过哪些模块'], desc: ['缓存未命中时的一次请求：客户端、服务、Redis、数据库', 'OAuth 授权码登录的完整往返'] },
+        dataflow: { repo: ['数据从采集到报表经过哪些处理', '日志和埋点数据都去了哪里'], desc: ['埋点：App 上报 → 采集网关 → Kafka → 实时计算和数仓 → BI 报表', '一笔工资从公司到个人账户的流向'] },
+        lifecycle: { repo: ['订单有哪些状态、怎么流转（看状态枚举和处理代码）', '后台任务的状态机，包括重试和超时'], desc: ['网购订单：待支付、已支付、已发货、已签收、退款中、已关闭', '一份签证申请从递交到出签的各个状态'] },
+        erd: { repo: ['数据库表结构和外键关系（看迁移文件或 ORM 模型）', '只画用户和订单相关的表'], desc: ['博客系统：用户、文章、评论、标签（文章和标签多对多）'] },
+        class: { repo: ['核心领域模型的类图', '支付模块的接口和实现类'], desc: ['动物、狗、猫的继承关系和各自的方法'] },
+        tree: { repo: ['这个仓库的模块树', '按模块拆开的功能清单'], desc: ['公司组织架构：CEO 下面有技术、产品、市场三个部门', '一个 App 的功能拆解'] },
+        timeline: { repo: ['版本历史（看 git tag 和 CHANGELOG）'], desc: ['一次线上故障：告警、定位、回滚、恢复', '我的求职时间线'] },
+        waterfall: { repo: ['一次页面加载各步骤的耗时（按代码里的调用顺序估算）'], desc: ['一次 API 请求的耗时：DNS 20ms、TLS 50ms、网关 5ms、服务 120ms（其中数据库 80ms）', '一次 AI 代理运行各步骤的耗时'] },
+        explainer: { repo: ['用一页讲清楚这个项目做什么、怎么跑起来', '这个仓库的认证是怎么做的'], desc: ['HTTPS 第一次访问为什么慢', '对比 Postgres 和 MySQL，给团队选型用'] },
+      },
+      en: {
+        auto: { repo: ['The overall structure of this repository', 'The full path one request takes through this project'], desc: ['Draw the description below as whatever diagram fits best: …'] },
+        architecture: { repo: ['The overall architecture, with external interfaces and data stores', 'Only how the backend services call each other', 'The deployment: containers, databases, caches and outside services'], desc: ['An online shop: web/app clients, API gateway, order, inventory and payment services (with a payment provider), a message queue, the orders database and a Redis cache', 'My home network: modem, router, NAS, TV, phones and laptops'] },
+        workflow: { repo: ['The release process from commit to production (from the CI config)', 'How a sign-up is handled, including validation failures and retries'], desc: ['Expense approval: an employee submits, the manager approves (a director too above $5,000), finance pays', 'The month before moving house, step by step'] },
+        sequence: { repo: ['Login: the calls and returns between frontend, gateway, auth service and database', 'Which modules one checkout request goes through'], desc: ['A request on a cache miss: client, service, Redis, database', 'The full OAuth authorization-code round trip'] },
+        dataflow: { repo: ['How data goes from collection to reports', 'Where the logs and analytics events end up'], desc: ['Analytics: app events → collector → Kafka → stream processing and warehouse → BI reports', 'Where a salary goes, from the company to a bank account'] },
+        lifecycle: { repo: ['The states of an order and how it moves between them (from the enum and its handlers)', 'The state machine of a background job, with retries and timeouts'], desc: ['An online order: awaiting payment, paid, shipped, delivered, refunding, closed', 'A visa application from submission to decision'] },
+        erd: { repo: ['The database tables and their foreign keys (from the migrations or ORM models)', 'Only the tables around users and orders'], desc: ['A blog: users, posts, comments and tags (posts and tags many-to-many)'] },
+        class: { repo: ['A class diagram of the core domain model', 'The interfaces and implementations of the payments module'], desc: ['Animal, Dog and Cat: inheritance and methods'] },
+        tree: { repo: ['The module tree of this repository', 'The feature list broken down by module'], desc: ['An org chart: the CEO with engineering, product and marketing below', 'The features of an app, broken down'] },
+        timeline: { repo: ['The release history (from git tags and the CHANGELOG)'], desc: ['An incident: alert, diagnosis, rollback, recovery', 'My job search, month by month'] },
+        waterfall: { repo: ['Where the time goes when a page loads (estimated from the call order in the code)'], desc: ['One API request: DNS 20ms, TLS 50ms, gateway 5ms, service 120ms (of which database 80ms)', 'The steps of one AI agent run and how long each took'] },
+        explainer: { repo: ['One page on what this project does and how to run it', 'How authentication works in this repository'], desc: ['Why the first HTTPS visit is slower', 'Postgres or MySQL, for the team to decide'] },
+      },
+    };
+
+    /** The Guide: what Archify does beyond drawing one type, each as a prompt to copy or open. */
+    const GUIDE = {
+      zh: [
+        { key: 'code', prompts: ['画一下这个仓库的架构图', '画一下下单流程的时序图，标出每一步对应的源码'] },
+        { key: 'mermaid', prompts: ['把这段 Mermaid 画成 Archify 图：\n```mermaid\nsequenceDiagram\n  App->>API: POST /login\n  API->>DB: 查询用户\n  DB-->>API: 用户记录\n  API-->>App: token\n```'] },
+        { key: 'edit', prompts: ['把支付服务拆成支付和对账两个服务，重新画', '整理一下布局', '换成 blueprint 风格', '图里的文字改成英文'] },
+        { key: 'compare', pic: 'compare', prompts: ['对比改造前后的架构，画一张差异图。改造前：……；改造后：……'] },
+        { key: 'explainer', pic: 'explainer', prompts: ['把上面的回答做成一页', '用一页讲清楚这个方案的取舍，给团队看'] },
+        { key: 'brands', prompts: ['用 AWS、Stripe、Redis 的品牌图标画这张架构图'] },
+        { key: 'review', prompts: ['点评一下这张架构图描述的系统：主要风险和改进建议'] },
+        { key: 'viewer', prompts: [] },
+      ],
+      en: [
+        { key: 'code', prompts: ['Draw the architecture of this repository', 'Draw the checkout flow as a sequence diagram, citing the source of each step'] },
+        { key: 'mermaid', prompts: ['Draw this Mermaid as an Archify diagram:\n```mermaid\nsequenceDiagram\n  App->>API: POST /login\n  API->>DB: find user\n  DB-->>API: user row\n  API-->>App: token\n```'] },
+        { key: 'edit', prompts: ['Split the payment service into payments and reconciliation, and draw it again', 'Tidy the layout', 'Switch to the blueprint style', 'Write the diagram text in Chinese'] },
+        { key: 'compare', pic: 'compare', prompts: ['Compare the architecture before and after the change as a delta diagram. Before: …; after: …'] },
+        { key: 'explainer', pic: 'explainer', prompts: ['Make the answer above a one-page explainer', 'One page on the trade-offs of this plan, for the team'] },
+        { key: 'brands', prompts: ['Draw this architecture with the AWS, Stripe and Redis brand marks'] },
+        { key: 'review', prompts: ['Review the system this architecture diagram describes: the main risks and what to improve'] },
+        { key: 'viewer', prompts: [] },
+      ],
+    };
+
+    /** A type's thumbnail in the Harness's theme, and its example as a live page. */
+    const previewSrc = (type) => `${PREVIEW_ROUTE}${encodeURIComponent(type)}-${pageTheme()}.webp`;
+    const exampleItem = (t, type) => ({ id: `example-${type}`, src: `${EXAMPLE_ROUTE}${encodeURIComponent(type)}`, type, title: t('exampleOf', { type: typeLabel(t, type) }), version: 'example', aspect: 0, example: true });
+
+    function Thumb({ type, height, fit = 'cover', onClick, title }) {
+      const [broken, setBroken] = useState(false);
+      const box = { display: 'block', width: '100%', height, borderRadius: 7, background: C.layer2, border: `1px solid ${C.border1}`, overflow: 'hidden', boxSizing: 'border-box', cursor: onClick ? 'zoom-in' : undefined, flex: 'none' };
+      if (type === 'auto') {
+        // Best fit: four kinds side by side.
+        return h(
+          'span',
+          { style: { ...box, display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 1 } },
+          ['architecture', 'sequence', 'workflow', 'erd'].map((k) => h('img', { key: k, src: previewSrc(k), alt: '', loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top left', display: 'block' } })),
+        );
+      }
+      if (broken) return h('span', { style: box });
+      return h(
+        'span',
+        { style: box, onClick, title, role: onClick ? 'button' : undefined, 'data-dsh-archify-thumb': type },
+        h('img', { src: previewSrc(type), alt: title ?? '', loading: 'lazy', onError: () => setBroken(true), style: { width: '100%', height: '100%', objectFit: fit, objectPosition: fit === 'cover' ? 'top center' : 'center', display: 'block' } }),
+      );
+    }
+
+    const fieldStyle = { font: 'inherit', fontSize: SMALL, color: C.primary, background: C.layer2, border: `1px solid ${C.border1}`, borderRadius: 8, padding: '7px 10px', outline: 'none', boxSizing: 'border-box' };
+
+    function Btn({ kind = 'plain', onClick, disabled, title, children, ...rest }) {
+      const primary = kind === 'primary';
+      return h(
+        'button',
+        {
+          type: 'button',
+          title,
+          disabled: disabled === true,
+          onClick: (e) => {
+            e.stopPropagation();
+            if (!disabled) onClick?.(e);
+          },
+          ...rest,
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            height: 30,
+            padding: '0 12px',
+            font: 'inherit',
+            fontSize: SMALL,
+            fontWeight: primary ? 620 : 500,
+            color: primary ? 'var(--dsw-alias-label-on-brand, #fff)' : C.primary,
+            background: primary ? C.label : C.layer2,
+            border: primary ? 'none' : `1px solid ${C.border1}`,
+            borderRadius: 8,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.5 : 1,
+            whiteSpace: 'nowrap',
+          },
+        },
+        children,
+      );
+    }
+
+    function Chip({ on, onClick, children, title, ...rest }) {
+      return h(
+        'button',
+        {
+          type: 'button',
+          title,
+          onClick: (e) => {
+            e.stopPropagation();
+            onClick?.(e);
+          },
+          ...rest,
+          style: { font: 'inherit', fontSize: 12, lineHeight: '16px', padding: '4px 10px', borderRadius: 999, cursor: 'pointer', color: on ? C.label : C.muted, background: on ? 'color-mix(in srgb, currentColor 10%, transparent)' : 'transparent', border: `1px solid ${on ? 'currentColor' : C.border1}`, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        },
+        children,
+      );
+    }
+
+    function Section({ title, children, aside }) {
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } }, h('span', { style: { fontSize: SMALL, fontWeight: 640, color: C.primary } }, title), aside ? h('span', { style: { fontSize: 11.5, color: C.faint } }, aside) : null),
+        children,
+      );
+    }
+
+    /** One copyable prompt: its text, and Copy / Open in a conversation. */
+    function PromptLine({ t, text: prompt, env, extra }) {
+      const [copied, setCopied] = useState(false);
+      return h(
+        'div',
+        { 'data-dsh-archify-prompt': true, style: { display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', borderRadius: 8, background: C.layer2, border: `1px solid ${C.border1}` } },
+        h('div', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: C.primary, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text', lineHeight: 1.55 } }, prompt),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 2, flex: 'none' } },
+          extra ?? null,
+          h(ToolButton, {
+            onClick: () => {
+              copyText(prompt);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1400);
+            },
+            title: copied ? t('copied') : t('copyPrompt'),
+            icon: copied ? svg(15, ['M5 12.5l4.5 4.5L19 7']) : h(CopyIcon),
+          }),
+          env?.canDraft?.() ? h(ToolButton, { onClick: () => void env.startDraft(prompt, ''), title: t('openInChat'), icon: h(ChatIcon) }) : null,
+        ),
+      );
+    }
+
+    function elapsed(job, now = Date.now()) {
+      const end = live(job) ? now : job.endedAt ?? now;
+      return fmtMs(Math.max(0, end - (job.startedAt ?? end)));
+    }
+
+    /** One run started from the panel: what it is doing, and its conversation or page. */
+    function JobRow({ t, job, env, onShowPage, onDismiss }) {
+      const running = live(job);
+      const color = job.state === 'failed' || job.state === 'ended' ? C.error : job.state === 'done' ? C.ok : C.label;
+      const mark = running ? '●' : job.state === 'done' ? '✓' : job.state === 'failed' ? '✕' : '–';
+      const what = job.kind === 'review' ? t('jobReview') : job.type && job.type !== 'auto' ? typeLabel(t, job.type) : t('type.auto');
+      const where = job.dir ? baseName(job.dir) : job.focus || '';
+      const status = running ? t(`act.${job.activity || 'thinking'}`) : t(`state.${job.state}`);
+      return h(
+        'div',
+        { 'data-dsh-archify-job': job.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: C.layer2, border: `1px solid ${C.border1}`, fontSize: 12.5, minWidth: 0 } },
+        h('span', { style: { color, flex: 'none', animation: running ? 'dsh-archify-pulse 1.4s ease-in-out infinite' : undefined } }, mark),
+        h('span', { style: { fontWeight: 600, color: C.primary, flex: 'none' } }, what),
+        where ? h('span', { title: job.dir || job.focus, style: { color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, where) : null,
+        h('span', { style: { flex: 1 } }),
+        h('span', { style: { color: C.faint, flex: 'none' } }, [status, job.steps ? t('steps', { n: job.steps }) : '', elapsed(job)].filter(Boolean).join(' · ')),
+        job.state === 'failed' && job.error ? h('span', { title: job.error, style: { color: C.error, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, job.error) : null,
+        job.kind !== 'review' && Array.isArray(job.pages) && job.pages.length > 0 ? h(Btn, { onClick: () => onShowPage?.(job.pages[job.pages.length - 1]), 'data-dsh-archify-job-show': job.id }, t('showPage')) : null,
+        job.sessionId && env?.canOpen?.() ? h(ToolButton, { onClick: () => env.openSession(job.sessionId), title: t('openSession'), icon: h(ChatIcon) }) : null,
+        running ? null : h(ToolButton, { onClick: () => onDismiss?.(job), title: t('dismiss'), icon: h(CloseIcon, { size: 14 }) }),
+      );
+    }
+
+    function Jobs({ t, jobs, env, onShowPage, onDismiss, kind }) {
+      const shown = (jobs ?? []).filter((j) => !kind || j.kind === kind).slice(0, 5);
+      if (shown.length === 0) return null;
+      return h('div', { 'data-dsh-archify-jobs': true, style: { display: 'flex', flexDirection: 'column', gap: 6 } }, shown.map((job) => h(JobRow, { key: job.id, t, job, env, onShowPage, onDismiss })));
+    }
+
+    /** New: a project folder or a description, a type, a focus; then one click. */
+    function NewView({ t, env, jobs, onJob, onShowPage, onDismiss, seed }) {
+      const lang = langOf(t);
+      const [mode, setMode] = useState(seed?.mode ?? 'repo');
+      const [dir, setDir] = useState(seed?.dir ?? '');
+      const [type, setType] = useState(seed?.type ?? 'architecture');
+      const [focus, setFocus] = useState(seed?.focus ?? '');
+      const [quality, setQuality] = useState('showcase');
+      const [preview, setPreview] = useState('');
+      const [showPrompt, setShowPrompt] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [copied, setCopied] = useState(false);
+      const seedKey = useRef(seed?.at ?? 0);
+      // A Guide example or a gallery action fills the form.
+      if (seed && seed.at !== seedKey.current) {
+        seedKey.current = seed.at;
+        if (seed.mode) setMode(seed.mode);
+        if (seed.type) setType(seed.type);
+        if (seed.focus !== undefined) setFocus(seed.focus);
+        if (seed.dir !== undefined) setDir(seed.dir);
+      }
+      const folder = mode === 'repo' ? dir.trim() : '';
+      const body = { dir: folder, type, focus, quality, lang };
+      const ready = mode === 'repo' ? folder !== '' : focus.trim() !== '';
+
+      // The prompt as it will be sent, shown on request.
+      useEffect(() => {
+        if (!showPrompt) return undefined;
+        const timer = setTimeout(() => {
+          void postJson(PROMPT_ROUTE, body)
+            .then((r) => setPreview(r?.ok ? r.prompt : r?.reason ? `(${r.reason})` : ''))
+            .catch(() => setPreview(''));
+        }, 250);
+        return () => clearTimeout(timer);
+      }, [showPrompt, mode, dir, type, focus, quality, lang]);
+
+      const promptNow = () => postJson(PROMPT_ROUTE, body).then((r) => (r?.ok ? r.prompt : Promise.reject(new Error(r?.reason || t('actionFailed')))));
+      const generate = () => {
+        if (!ready || busy) return;
+        setBusy(true);
+        setError('');
+        void postJson(GENERATE_ROUTE, body)
+          .then((r) => {
+            if (r?.job) onJob?.(r.job);
+            if (!r?.ok) setError(r?.reason || t('actionFailed'));
+          })
+          .catch(() => setError(t('actionFailed')))
+          .finally(() => setBusy(false));
+      };
+      const openDraft = () => {
+        if (!ready) return;
+        setError('');
+        void promptNow()
+          .then((p) => env.startDraft(p, folder))
+          .then((ok) => (ok === false ? setError(t('actionFailed')) : undefined))
+          .catch((e) => setError(e?.message || t('actionFailed')));
+      };
+      const copy = () => {
+        if (!ready) return;
+        void promptNow()
+          .then((p) => {
+            copyText(p);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1400);
+          })
+          .catch((e) => setError(e?.message || t('actionFailed')));
+      };
+      const pick = () => {
+        setError('');
+        Promise.resolve()
+          .then(() => env.pickDirectory())
+          .then(
+            (picked) => {
+              if (typeof picked === 'string' && picked !== '') setDir(picked);
+            },
+            () => setError(t('pickFailed')),
+          );
+      };
+
+      const [example, setExample] = useState('');
+      const recent = (env?.workspaces?.() ?? []).filter((w) => w.path).slice(0, 8);
+      const examples = (EXAMPLES[lang] ?? EXAMPLES.en)[type]?.[mode === 'repo' ? 'repo' : 'desc'] ?? [];
+      const canRun = env?.canRun?.() !== false;
+
+      return h(
+        'div',
+        { 'data-dsh-archify-new': true, style: { display: 'flex', flexDirection: 'column', gap: 18, padding: '18px 22px 48px', maxWidth: 880 } },
+        h(
+          Section,
+          { title: t('newWhat') },
+          h(
+            'div',
+            { style: { display: 'flex', gap: 6 } },
+            h(Chip, { on: mode === 'repo', onClick: () => setMode('repo'), 'data-dsh-archify-mode': 'repo' }, t('modeRepo')),
+            h(Chip, { on: mode === 'describe', onClick: () => setMode('describe'), 'data-dsh-archify-mode': 'describe' }, t('modeDescribe')),
+          ),
+          mode === 'repo'
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8 } },
+                  h('input', { type: 'text', value: dir, placeholder: t('folderPlaceholder'), spellCheck: false, onChange: (e) => setDir(e.target.value), 'data-dsh-archify-folder': true, style: { ...fieldStyle, flex: 1, minWidth: 0, fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 12 } }),
+                  env?.canPickDirectory?.() ? h(Btn, { onClick: pick, 'data-dsh-archify-pick': true }, h(FolderIcon, { size: 14 }), t('pickFolder')) : null,
+                ),
+                recent.length > 0
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+                      h('span', { style: { fontSize: 11.5, color: C.faint } }, t('recentFolders')),
+                      recent.map((w) => h(Chip, { key: w.path, on: dir === w.path, title: w.path, onClick: () => setDir(w.path) }, w.title || baseName(w.path))),
+                    )
+                  : null,
+              )
+            : null,
+        ),
+        h(
+          Section,
+          { title: t('newType') },
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 10 } },
+            PICKABLE.map((k) =>
+              h(
+                'button',
+                {
+                  key: k,
+                  type: 'button',
+                  'data-dsh-archify-type': k,
+                  onClick: () => setType(k),
+                  style: { textAlign: 'left', font: 'inherit', padding: 7, borderRadius: 11, cursor: 'pointer', background: type === k ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent)' : C.layer1, border: `1px solid ${type === k ? C.label : C.border1}`, display: 'flex', flexDirection: 'column', gap: 4 },
+                },
+                h(Thumb, { type: k, height: 92 }),
+                h('span', { style: { fontSize: SMALL, fontWeight: 620, color: type === k ? C.label : C.primary, padding: '2px 4px 0' } }, k === 'auto' ? t('type.auto') : typeLabel(t, k)),
+                h('span', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.4, padding: '0 4px 2px' } }, t(`use.${k}`)),
+              ),
+            ),
+          ),
+          type !== 'auto'
+            ? h(
+                'div',
+                { 'data-dsh-archify-example': type, style: { display: 'flex', gap: 14, alignItems: 'flex-start', padding: 10, borderRadius: 12, background: C.layer1, border: `1px solid ${C.border1}`, flexWrap: 'wrap' } },
+                h('div', { style: { width: 360, maxWidth: '100%' } }, h(Thumb, { type, height: 220, fit: 'contain', onClick: () => setExample(type), title: t('seeExample') })),
+                h(
+                  'div',
+                  { style: { flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 4 } },
+                  h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('looksLike', { type: typeLabel(t, type) })),
+                  h('span', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, t(`use.${type}`)),
+                  h('span', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, t('exampleNote')),
+                  h('div', null, h(Btn, { onClick: () => setExample(type), 'data-dsh-archify-see-example': type }, h(ExpandIcon, { size: 14 }), t('seeExample'))),
+                ),
+              )
+            : null,
+        ),
+        h(
+          Section,
+          { title: mode === 'repo' ? t('newFocusRepo') : t('newFocusDescribe'), aside: mode === 'repo' ? t('optional') : null },
+          h('textarea', { value: focus, rows: mode === 'repo' ? 2 : 4, placeholder: examples[0] ?? '', onChange: (e) => setFocus(e.target.value), 'data-dsh-archify-focus': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
+          examples.length > 0
+            ? h(
+                'div',
+                { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+                h('span', { style: { fontSize: 11.5, color: C.faint } }, t('examples')),
+                examples.map((ex) => h(Chip, { key: ex, title: ex, onClick: () => setFocus(ex) }, ex.length > 42 ? `${ex.slice(0, 41)}…` : ex)),
+              )
+            : null,
+        ),
+        h(
+          Section,
+          { title: t('newQuality') },
+          h(
+            'div',
+            { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+            h(Chip, { on: quality === 'showcase', onClick: () => setQuality('showcase') }, t('qualityShowcase')),
+            h(Chip, { on: quality === 'standard', onClick: () => setQuality('standard') }, t('qualityStandard')),
+            h('span', { style: { fontSize: 11.5, color: C.faint } }, quality === 'standard' ? t('qualityStandardHint') : t('qualityShowcaseHint')),
+          ),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+          h(Btn, { kind: 'primary', onClick: generate, disabled: !ready || busy || !canRun, 'data-dsh-archify-generate': true, title: canRun ? t('generateHint') : t('cannotRun') }, h(ArchifyGlyph, { size: 14 }), busy ? t('starting') : t('generate')),
+          env?.canDraft?.() ? h(Btn, { onClick: openDraft, disabled: !ready, 'data-dsh-archify-draft': true, title: t('openInChatHint') }, h(ChatIcon, { size: 14 }), t('openInChat')) : null,
+          h(Btn, { onClick: copy, disabled: !ready }, h(CopyIcon, { size: 14 }), copied ? t('copied') : t('copyPrompt')),
+          h('span', { style: { flex: 1 } }),
+          h('button', { type: 'button', onClick: () => setShowPrompt((v) => !v), style: { font: 'inherit', fontSize: 12, color: C.faint, background: 'none', border: 'none', cursor: 'pointer', padding: 0 } }, `${showPrompt ? '▾' : '▸'} ${t('showPrompt')}`),
+        ),
+        error ? h('div', { style: { fontSize: 12.5, color: C.error } }, error) : null,
+        !ready ? h('div', { style: { fontSize: 12, color: C.faint } }, mode === 'repo' ? t('needFolder') : t('needFocus')) : null,
+        showPrompt ? h('pre', { 'data-dsh-archify-preview-prompt': true, style: { margin: 0, maxHeight: 300, overflow: 'auto', fontSize: 11.5, lineHeight: 1.55, padding: '10px 12px', borderRadius: 8, background: C.layer2, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' } }, preview || '…') : null,
+        mode === 'repo' && showPrompt ? h('div', { style: { fontSize: 11.5, color: C.faint } }, t('scanNote')) : null,
+        h(Jobs, { t, jobs, env, onShowPage, onDismiss, kind: 'diagram' }),
+        example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
+      );
+    }
+
+    /** Guide: what Archify can do, each as a prompt to copy or open in a conversation. */
+    function GuideView({ t, env, onUse }) {
+      const lang = langOf(t);
+      const sections = GUIDE[lang] ?? GUIDE.en;
+      const [example, setExample] = useState('');
+      return h(
+        'div',
+        { 'data-dsh-archify-guide': true, style: { display: 'flex', flexDirection: 'column', gap: 22, padding: '18px 22px 48px', maxWidth: 880 } },
+        h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7 } }, t('guideIntro')),
+        h(
+          Section,
+          { title: t('guide.types') },
+          h(
+            'div',
+            { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            PICKABLE.filter((k) => k !== 'auto').map((k) => {
+              const ex = (EXAMPLES[lang] ?? EXAMPLES.en)[k] ?? {};
+              const sample = ex.desc?.[0] ?? ex.repo?.[0] ?? '';
+              return h(
+                'div',
+                { key: k, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 4px', borderBottom: `1px solid ${C.border1}`, minWidth: 0 } },
+                h('span', { style: { width: 132, flex: 'none' } }, h(Thumb, { type: k, height: 76, onClick: () => setExample(k), title: t('seeExample') })),
+                h('span', { style: { width: 76, flex: 'none' } }, h(TypeChip, { t, type: k })),
+                h('span', { style: { fontSize: 12, color: C.muted, width: 190, flex: 'none' } }, t(`use.${k}`)),
+                h('span', { title: sample, style: { fontSize: 12, color: C.faint, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, sample),
+                h(Btn, { onClick: () => onUse?.({ type: k, mode: ex.desc ? 'describe' : 'repo', focus: sample }), 'data-dsh-archify-use': k }, t('useThis')),
+              );
+            }),
+          ),
+        ),
+        sections.map((s) =>
+          h(
+            Section,
+            { key: s.key, title: t(`guide.${s.key}`) },
+            s.pic
+              ? h(
+                  'div',
+                  { style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' } },
+                  h('div', { style: { width: 300, maxWidth: '100%' } }, h(Thumb, { type: s.pic, height: 170, fit: 'contain', onClick: () => setExample(s.pic), title: t('seeExample') })),
+                  h('div', { style: { flex: 1, minWidth: 240, fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${s.key}.note`)),
+                )
+              : h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${s.key}.note`)),
+            s.prompts.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, s.prompts.map((p) => h(PromptLine, { key: p, t, text: p, env }))) : null,
+          ),
+        ),
+        example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
+      );
+    }
+
+    const LEVEL_COLOR = { risk: C.error, warn: 'var(--dsw-alias-state-warning-primary, #d08a1c)', info: C.faint, good: C.ok };
+
+    /** One finding of the structural review, in the reader's language. */
+    function findingText(t, f) {
+      const p = { ...(f.params ?? {}) };
+      for (const k of Object.keys(p)) if (Array.isArray(p[k])) p[k] = k === 'path' ? p[k].join(' → ') : listJoin(t, p[k]);
+      const key = `rv.${f.code}`;
+      const said = t(key, p);
+      return said === key ? f.code : said;
+    }
+
+    /** Review: the plugin's structural checks of a drawn architecture, and the model's deeper review. */
+    function ReviewBox({ t, item, env, jobs, onJob }) {
+      const [data, setData] = useState(null);
+      const [asking, setAsking] = useState(false);
+      const [error, setError] = useState('');
+      useEffect(() => {
+        let alive = true;
+        setData(null);
+        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(item.id)}`)
+          .then((r) => alive && setData(r ?? { supported: false, findings: [] }))
+          .catch(() => alive && setData({ supported: false, findings: [] }));
+        return () => {
+          alive = false;
+        };
+      }, [item.id, item.version]);
+      const job = (jobs ?? []).find((j) => j.kind === 'review' && j.pageId === item.id);
+      const ask = () => {
+        setAsking(true);
+        setError('');
+        void postJson(ASK_ROUTE, { id: item.id, lang: langOf(t) })
+          .then((r) => {
+            if (r?.job) onJob?.(r.job);
+            if (!r?.ok) setError(r?.reason || t('actionFailed'));
+          })
+          .catch(() => setError(t('actionFailed')))
+          .finally(() => setAsking(false));
+      };
+      const findings = Array.isArray(data?.findings) ? data.findings : [];
+      const s = data?.summary;
+      return h(
+        'div',
+        { 'data-dsh-archify-review': item.id, style: { marginTop: 14, border: `1px solid ${C.border1}`, borderRadius: 12, background: C.layer1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('reviewTitle')),
+          s ? h('span', { style: { fontSize: 11.5, color: C.faint } }, t('reviewSummary', { components: s.components, connections: s.connections, async: s.async, boundaries: s.boundaries })) : null,
+          h('span', { style: { flex: 1 } }),
+          job && live(job)
+            ? h('span', { style: { fontSize: 12, color: C.faint } }, `${t(`act.${job.activity || 'thinking'}`)} · ${elapsed(job)}`)
+            : h(Btn, { onClick: ask, disabled: asking || env?.canRun?.() === false, 'data-dsh-archify-ask': item.id, title: t('askReviewHint') }, h(ChatIcon, { size: 14 }), job ? t('askAgain') : t('askReview')),
+          job?.sessionId && env?.canOpen?.() ? h(Btn, { onClick: () => env.openSession(job.sessionId) }, t(live(job) ? 'watchReview' : 'readReview')) : null,
+        ),
+        data === null
+          ? h('div', { style: { fontSize: 12, color: C.faint } }, '…')
+          : !data.supported
+            ? h('div', { style: { fontSize: 12, color: C.faint } }, t('reviewUnavailable'))
+            : findings.length === 0
+              ? h('div', { style: { fontSize: 12.5, color: C.muted } }, t('reviewClean'))
+              : h(
+                  'ul',
+                  { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 } },
+                  findings.map((f, i) =>
+                    h(
+                      'li',
+                      { key: `${f.code}:${i}`, 'data-dsh-archify-finding': f.code, style: { display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5, lineHeight: 1.6, color: C.primary } },
+                      h('span', { style: { flex: 'none', fontSize: 11, fontWeight: 640, color: LEVEL_COLOR[f.level] ?? C.faint, minWidth: 44 } }, t(`level.${f.level}`)),
+                      h('span', { style: { userSelect: 'text' } }, findingText(t, f)),
+                    ),
+                  ),
+                ),
+        error ? h('div', { style: { fontSize: 12, color: C.error } }, error) : null,
+        h('div', { style: { fontSize: 11.5, color: C.faint } }, t('reviewNote')),
+      );
+    }
+
+    /** A request from outside the panel (a card's Review button) to show one page. */
+    const panelRequests = { pending: '', listeners: new Set() };
+    function requestPage(id) {
+      panelRequests.pending = id;
+      for (const fn of panelRequests.listeners) fn(id);
+    }
 
     function ArchifyPanel(props) {
       const t = typeof props.t === 'function' ? props.t : fallbackT;
+      const env = props.env ?? {};
       const [items, setItems] = useState(null);
       const [total, setTotal] = useState(0);
       const [hasMore, setHasMore] = useState(false);
@@ -586,9 +1187,15 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = useState('');
       const [full, setFull] = useState(false);
       const [query, setQuery] = useState('');
+      const [tab, setTab] = useState('');
+      const [jobs, setJobs] = useState([]);
+      const [seed, setSeed] = useState(null);
+      const [, setTick] = useState(0);
       const alive = useRef(true);
       const itemsRef = useRef(items);
       itemsRef.current = items;
+      const jobsRef = useRef(jobs);
+      jobsRef.current = jobs;
       const pane = useRef(null);
       const [paneW, setPaneW] = useState(0);
 
@@ -616,6 +1223,17 @@ window.__ModuleLoader__.load({
           })
           .catch(() => alive.current && itemsRef.current === null && setFailed(true));
 
+      const refreshJobs = () =>
+        getJson(JOBS_ROUTE)
+          .then((body) => {
+            if (!alive.current || !Array.isArray(body?.jobs)) return;
+            const before = jobsRef.current;
+            setJobs(body.jobs);
+            // A run that just delivered: its page joins the gallery now, not at the next poll.
+            if (body.jobs.some((j) => j.pages?.length && !before.find((b) => b.id === j.id && b.pages?.length === j.pages.length))) void refresh();
+          })
+          .catch(() => {});
+
       const loadMore = () => {
         const known = itemsRef.current;
         if (!hasMore || !known || known.length === 0) return;
@@ -629,15 +1247,40 @@ window.__ModuleLoader__.load({
           .catch(() => {});
       };
 
+      const showPage = (id) => {
+        setTab('gallery');
+        setQuery('');
+        setSelected(id);
+        if (!(itemsRef.current ?? []).some((i) => i.id === id)) void refresh();
+      };
+
       useEffect(() => {
         alive.current = true;
         refresh();
+        refreshJobs();
         const timer = setInterval(() => {
-          if (typeof document === 'undefined' || !document.hidden) refresh();
+          if (typeof document !== 'undefined' && document.hidden) return;
+          refresh();
         }, POLL_MS);
+        // Runs move fast: their status every two seconds while one is live, and the clock with it.
+        const jobTimer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.hidden) return;
+          if (jobsRef.current.some(live)) {
+            refreshJobs();
+            setTick((n) => n + 1);
+          }
+        }, 2000);
+        const onRequest = (id) => showPage(id);
+        panelRequests.listeners.add(onRequest);
+        if (panelRequests.pending) {
+          showPage(panelRequests.pending);
+          panelRequests.pending = '';
+        }
         return () => {
           alive.current = false;
           clearInterval(timer);
+          clearInterval(jobTimer);
+          panelRequests.listeners.delete(onRequest);
         };
       }, []);
 
@@ -649,7 +1292,10 @@ window.__ModuleLoader__.load({
         const ro = new ResizeObserver(() => setPaneW(el.clientWidth));
         ro.observe(el);
         return () => ro.disconnect();
-      }, [items === null]);
+      }, [items === null, tab]);
+
+      // The first view: the gallery when there is something in it, else New.
+      const view = tab || (items !== null && items.length === 0 ? 'new' : 'gallery');
 
       const q = query.trim().toLowerCase();
       const shown = (items ?? []).filter((i) => !q || `${i.title} ${i.type} ${typeLabel(t, i.type)} ${i.path}`.toLowerCase().includes(q));
@@ -669,29 +1315,74 @@ window.__ModuleLoader__.load({
         setTotal((n) => Math.max(0, n - 1));
         void postJson(DELETE_ROUTE, { id: item.id }).catch(() => {});
       };
+      const addJob = (job) => {
+        setJobs((list) => [job, ...(list ?? []).filter((j) => j.id !== job.id)]);
+        setTimeout(refreshJobs, 800);
+      };
+      const dismissJob = (job) => {
+        setJobs((list) => (list ?? []).filter((j) => j.id !== job.id));
+        void postJson(DISMISS_ROUTE, { id: job.id }).catch(() => {});
+      };
+      const use = (fill) => {
+        setSeed({ ...fill, at: Date.now() });
+        setTab('new');
+      };
+
+      const tabButton = (key, label) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            key,
+            'data-dsh-archify-tab': key,
+            onClick: () => setTab(key),
+            style: { font: 'inherit', fontSize: SMALL, fontWeight: view === key ? 640 : 500, color: view === key ? C.primary : C.muted, background: view === key ? C.hover : 'transparent', border: 'none', borderRadius: 7, padding: '5px 10px', cursor: 'pointer' },
+          },
+          label,
+        );
 
       const header = h(
         'div',
-        { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px 12px', borderBottom: `1px solid ${C.border1}`, flex: 'none' } },
+        { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px 10px', borderBottom: `1px solid ${C.border1}`, flex: 'none', flexWrap: 'wrap' } },
         h(ArchifyGlyph, { size: 18, active: true }),
-        h('span', { style: { fontSize: 15.5, fontWeight: 640, color: C.primary } }, t('title')),
-        total > 0 ? h('span', { style: { fontSize: SMALL, color: C.faint } }, t('count', { n: total })) : null,
+        h('span', { style: { fontSize: 15.5, fontWeight: 640, color: C.primary, marginRight: 6 } }, t('title')),
+        tabButton('new', t('tabNew')),
+        tabButton('gallery', total > 0 ? `${t('tabGallery')} ${total}` : t('tabGallery')),
+        tabButton('guide', t('tabGuide')),
         h('span', { style: { flex: 1 } }),
-        items && items.length > 0
+        view === 'gallery' && items && items.length > 0
           ? h('input', {
               type: 'search',
               value: query,
               placeholder: t('search'),
               onChange: (e) => setQuery(e.target.value),
-              style: { font: 'inherit', fontSize: SMALL, color: C.primary, background: C.layer2, border: `1px solid ${C.border1}`, borderRadius: 8, padding: '5px 10px', width: 200, outline: 'none' },
+              style: { ...fieldStyle, padding: '5px 10px', width: 200 },
             })
           : null,
       );
 
       let body;
-      if (failed) body = h('div', { style: { padding: 24, color: C.faint } }, t('unavailable'));
+      if (view === 'new') {
+        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(NewView, { t, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob, seed }));
+      } else if (view === 'guide') {
+        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(GuideView, { t, env, onUse: use }));
+      } else if (failed) body = h('div', { style: { padding: 24, color: C.faint } }, t('unavailable'));
       else if (items === null) body = h('div', { style: { padding: 24, color: C.faint } }, '…');
-      else if (items.length === 0) body = h('div', { style: { padding: '48px 24px', color: C.muted, maxWidth: 560, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t('empty'));
+      else if (items.length === 0)
+        body = h(
+          'div',
+          { style: { padding: '48px 24px', color: C.muted, maxWidth: 560, lineHeight: 1.7, display: 'flex', flexDirection: 'column', gap: 14 } },
+          h('div', { style: { whiteSpace: 'pre-line' } }, t('empty')),
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 } },
+            ['architecture', 'sequence', 'workflow', 'erd', 'dataflow', 'timeline'].map((k) =>
+              h('div', { key: k, style: { display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer' }, onClick: () => setTab('new') }, h(Thumb, { type: k, height: 84 }), h('span', { style: { fontSize: 11.5, color: C.faint } }, typeLabel(t, k))),
+            ),
+          ),
+          h('div', null, h(Btn, { kind: 'primary', onClick: () => setTab('new') }, t('tabNewLong'))),
+          h(Jobs, { t, jobs, env, onShowPage: showPage, onDismiss: dismissJob }),
+        );
       else {
         const list = h(
           'div',
@@ -751,10 +1442,12 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { ref: pane, style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 } },
+                jobs.some(live) ? h('div', { style: { marginBottom: 12 } }, h(Jobs, { t, jobs: jobs.filter(live), env, onShowPage: showPage, onDismiss: dismissJob })) : null,
                 current.missing
                   ? h('div', { style: { color: C.faint, padding: 12 } }, t('missingLong', { path: current.path }))
                   : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34, title: current.title })),
                 h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
+                current.type === 'architecture' && !current.missing ? h(ReviewBox, { t, item: current, env, jobs, onJob: addJob }) : null,
               ),
             )
           : h('div', { style: { flex: 1, padding: 24, color: C.faint } }, t('noMatch'));
@@ -763,7 +1456,8 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { 'data-dsh-archify-panel': true, style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: C.base, color: C.primary, fontSize: FONT, boxSizing: 'border-box' } },
+        { 'data-dsh-archify-panel': true, 'data-dsh-archify-view': view, style: { position: 'relative', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', background: C.base, color: C.primary, fontSize: FONT, boxSizing: 'border-box' } },
+        h('style', null, '@keyframes dsh-archify-pulse{0%,100%{opacity:1}50%{opacity:.35}}'),
         header,
         body,
         full && current ? h(FullScreen, { t, item: current, onClose: () => setFull(false), onOpenSession: openSession }) : null,
@@ -810,7 +1504,7 @@ window.__ModuleLoader__.load({
         missingLong: 'This page is no longer at {path}.',
         noMatch: 'Nothing matches.',
         empty:
-          'No diagrams yet.\n\nAsk in any conversation — "draw the architecture of this repo", "画一下下单的时序图", "make this answer a one-page explainer" — and the page appears in the conversation and here, newest first.',
+          'No diagrams yet.\n\nPick a project folder and a type under New, or ask in any conversation — "draw the architecture of this repo", "画一下下单的时序图", "make this answer a one-page explainer". Each page appears in its conversation and here, newest first.',
         unavailable: 'Cannot reach the Archify list. Refresh the page, or check the plugin is enabled.',
         justNow: 'just now',
         minutesAgo: '{n} min ago',
@@ -827,6 +1521,125 @@ window.__ModuleLoader__.load({
         'type.timeline': 'Timeline',
         'type.waterfall': 'Waterfall',
         'type.explainer': 'Explainer',
+        'type.compare': 'Before and after',
+        "lang": "en",
+        "tabNew": "New",
+        "tabGallery": "Gallery",
+        "tabGuide": "Guide",
+        "tabNewLong": "Draw a new diagram",
+        "newWhat": "What to draw",
+        "modeRepo": "A codebase",
+        "modeDescribe": "A description",
+        "folderPlaceholder": "Project folder, e.g. /Users/me/code/shop",
+        "pickFolder": "Choose…",
+        "pickFailed": "The folder dialog could not open; type the path instead.",
+        "recentFolders": "Recent:",
+        "newType": "Diagram type",
+        "newFocusRepo": "Focus",
+        "newFocusDescribe": "Describe it",
+        "optional": "optional: leave empty for the whole picture",
+        "examples": "Examples:",
+        "newQuality": "Quality",
+        "qualityShowcase": "Fine",
+        "qualityStandard": "Fast",
+        "qualityShowcaseHint": "the full checks Archify ships with",
+        "qualityStandardHint": "skips the showcase-only polish checks, for a first look sooner",
+        "generate": "Generate",
+        "generateHint": "Starts a conversation of its own and draws the diagram there; follow it here.",
+        "cannotRun": "This Harness cannot start conversations from a plugin; use Open in a conversation.",
+        "starting": "Starting…",
+        "openInChat": "Open in a conversation",
+        "openInChatHint": "A new conversation in that folder with this prompt in the composer, for you to send",
+        "copyPrompt": "Copy the prompt",
+        "showPrompt": "The prompt",
+        "needFolder": "Pick or type the project folder.",
+        "needFocus": "Describe what to draw, or pick an example.",
+        "scanNote": "Generate also attaches the plugin's scan of the repository (folders, manifests, deployment files, Git revision), so the model skips listing it.",
+        "actionFailed": "That did not work. Try again.",
+        "jobReview": "Review",
+        "showPage": "Show",
+        "dismiss": "Dismiss",
+        "steps": "{n} steps",
+        "act.starting": "starting",
+        "act.thinking": "thinking",
+        "act.loading": "loading the skill",
+        "act.scanning": "scanning the repository",
+        "act.reading": "reading",
+        "act.editing": "editing the candidate",
+        "act.rendering": "rendering and checking",
+        "act.delivered": "page delivered",
+        "state.starting": "starting",
+        "state.running": "working",
+        "state.done": "done",
+        "state.ended": "ended without a page",
+        "state.failed": "could not start",
+        "type.auto": "Best fit",
+        "use.auto": "not sure? the model picks",
+        "use.architecture": "what a system is made of and how the parts connect",
+        "use.workflow": "steps, branches, approvals, CI/CD",
+        "use.sequence": "who calls whom, in order",
+        "use.dataflow": "where data comes from and goes",
+        "use.lifecycle": "states and the moves between them",
+        "use.erd": "tables, columns, keys",
+        "use.class": "classes, interfaces, inheritance",
+        "use.tree": "a breakdown: modules, an org, features",
+        "use.timeline": "what happened when",
+        "use.waterfall": "where the time went",
+        "use.explainer": "an answer as one page",
+        "guideIntro": "Archify draws ten kinds of diagram and makes one-page explainers. Everything below is a prompt you can copy into any conversation, or open in a new one; ask in your own words just as well.",
+        "guide.types": "Diagram types",
+        "useThis": "Use",
+        "guide.code": "From your code",
+        "guide.code.note": "Ask in a conversation opened in the project (or use New with its folder). The plugin scans the repository in one call, and each part of the diagram can cite the source it comes from.",
+        "guide.mermaid": "From Mermaid",
+        "guide.mermaid.note": "Paste a flowchart, sequenceDiagram, stateDiagram, erDiagram or classDiagram: Archify keeps its meaning and draws it fresh.",
+        "guide.edit": "Change a diagram",
+        "guide.edit.note": "Ask in the conversation that drew it. Architecture is laid out by the plugin, so you only say what changes: parts, connections, groups, wording. Styles: classic (default), signal-flow, blueprint, editorial.",
+        "guide.compare": "Before and after",
+        "guide.compare.note": "Two versions of an architecture become one delta page that marks what was added, removed and changed.",
+        "guide.explainer": "One-page explainers",
+        "guide.explainer.note": "An answer as a page: the conclusion first, the reasons in panels, with native diagrams. To get pages without asking, add a line to your rules: [archify explainer: proactive] (or always-on).",
+        "guide.brands": "Brand marks",
+        "guide.brands.note": "Real products (AWS, Stripe, Redis, GitHub…) can carry their marks next to the type icon; name them in the prompt.",
+        "guide.review": "Review an architecture",
+        "guide.review.note": "Pick an architecture in the Gallery: under it, the plugin's structural review (shared databases, hotspots, cycles, long call chains, missing gateways) and a button for the model's deeper review.",
+        "guide.viewer": "Reading a page",
+        "guide.viewer.note": "Inside a page: ? lists the shortcuts; search finds a part; click a part for what goes in and out of it; pick two parts for the route between them; the menu exports PNG, JPEG, WebP, a two-theme SVG or a WebM recording; switch light and dark, and live or still motion.",
+        "reviewTitle": "Review",
+        "reviewSummary": "{components} parts · {connections} connections ({async} async) · {boundaries} boundaries",
+        "askReview": "Ask the model to review",
+        "askAgain": "Review again",
+        "askReviewHint": "Sends these findings and the diagram to the model, in the conversation that drew it, for risks and suggestions",
+        "watchReview": "Watch",
+        "readReview": "Read the review",
+        "reviewUnavailable": "No review for this page (its candidate is gone).",
+        "reviewClean": "No obvious structural issue in the drawing.",
+        "reviewNote": "Heuristics over the drawing, not the code: each point is something to check.",
+        "level.risk": "Risk",
+        "level.warn": "Check",
+        "level.info": "Note",
+        "level.good": "Good",
+        "rv.shared-store": "{n} services use the data store \"{store}\" directly ({users}). A shared database ties them together and makes schema changes a joint effort; consider data owned per service, or one service in front of it.",
+        "rv.client-to-store": "The client \"{client}\" reaches the data store \"{store}\" directly, past the service layer's checks and permissions. It usually goes through a backend.",
+        "rv.client-fanout": "The client \"{client}\" calls {n} internal services directly ({targets}) with no gateway in front. A gateway or BFF would centralize auth, rate limits and aggregation.",
+        "rv.hotspot": "{n} parts depend on \"{name}\": a likely single point of failure and bottleneck. Check that it scales out and degrades gracefully.",
+        "rv.wide-dependency": "\"{name}\" depends on {n} parts: it may do too much, and any of them failing affects it.",
+        "rv.cycle": "Synchronous calls form a cycle: {names}. Circular dependencies are hard to deploy and debug separately; consider an event or a merged boundary.",
+        "rv.deep-chain": "A synchronous call chain of {hops} hops: {path}. Latency and failures add up along it; consider caching, async work or fewer hops.",
+        "rv.all-sync": "All calls between the {n} backend services are synchronous, with no queue. Slow or retryable work could go async.",
+        "rv.external-deps": "{n} external dependencies on the call path ({names}). Check timeouts, retries and circuit breakers, and what happens when one is down.",
+        "rv.no-security": "No authentication part or security boundary is drawn. If the system has one, draw it; if not, check where access control lives.",
+        "rv.no-observability": "Nothing on the drawing monitors, logs or traces the system. For a system this size, observability is worth showing or adding.",
+        "rv.isolated": "{n} parts have no connections ({names}): either a relationship is missing or they can go.",
+        "rv.stores-owned": "Each of the {n} data stores is used by one service: clear data ownership.",
+        "rv.gateway-front": "Clients enter through {gateway}: one front door.",
+        "rv.async-decoupling": "Asynchronous work goes through {bus}, so producers and consumers are decoupled.",
+        "reviewInPanel": "Review this architecture (Archify panel)",
+        "scanned": "scanned {root}",
+        "exampleOf": "{type}: an example",
+        "looksLike": "What a {type} looks like",
+        "seeExample": "Open the full example",
+        "exampleNote": "One of Archify's own examples. Click it to open the live page: zoom, search, click a part for what goes in and out, switch light and dark.",
       },
       zh: {
         title: 'Archify',
@@ -864,7 +1677,7 @@ window.__ModuleLoader__.load({
         missing: '文件已不在',
         missingLong: '这个页面已经不在 {path} 了。',
         noMatch: '没有匹配的。',
-        empty: '还没有图。\n\n在任何会话里说一句——「画一下这个仓库的架构图」「画一下下单的时序图」「把这个回答做成一页」——画好的页面会出现在对话里，也会收在这里，最新的在前。',
+        empty: '还没有图。\n\n在「新建」里选项目文件夹和图的类型，或者在任何会话里说一句——「画一下这个仓库的架构图」「画一下下单的时序图」「把这个回答做成一页」。画好的页面会出现在对话里，也会收在这里，最新的在前。',
         unavailable: '连不上 Archify 列表。刷新页面，或确认插件已启用。',
         justNow: '刚刚',
         minutesAgo: '{n} 分钟前',
@@ -881,6 +1694,125 @@ window.__ModuleLoader__.load({
         'type.timeline': '时间线',
         'type.waterfall': '瀑布图',
         'type.explainer': '讲解页',
+        'type.compare': '前后对比',
+        "lang": "zh",
+        "tabNew": "新建",
+        "tabGallery": "图库",
+        "tabGuide": "用法",
+        "tabNewLong": "画一张新图",
+        "newWhat": "画什么",
+        "modeRepo": "代码仓库",
+        "modeDescribe": "按描述画",
+        "folderPlaceholder": "项目文件夹，例如 /Users/me/code/shop",
+        "pickFolder": "选择…",
+        "pickFailed": "打不开文件夹对话框，直接输入路径吧。",
+        "recentFolders": "最近：",
+        "newType": "图的类型",
+        "newFocusRepo": "重点",
+        "newFocusDescribe": "描述一下",
+        "optional": "可选：留空就画整体",
+        "examples": "例子：",
+        "newQuality": "质量",
+        "qualityShowcase": "精致",
+        "qualityStandard": "快速",
+        "qualityShowcaseHint": "Archify 自带的全套检查",
+        "qualityStandardHint": "跳过只为精致版准备的打磨检查，更快看到第一版",
+        "generate": "生成",
+        "generateHint": "开一个新会话在里面画图，进度在这里看。",
+        "cannotRun": "这个 Harness 不支持插件开会话，用「在对话中打开」。",
+        "starting": "正在开始…",
+        "openInChat": "在对话中打开",
+        "openInChatHint": "在那个文件夹开一个新会话，提示词填进输入框，你确认后发送",
+        "copyPrompt": "复制提示词",
+        "showPrompt": "提示词",
+        "needFolder": "选择或输入项目文件夹。",
+        "needFocus": "描述要画什么，或者点一个例子。",
+        "scanNote": "点「生成」时会附上插件对仓库的扫描（目录、清单、部署文件、Git 版本），模型不用再逐个列目录。",
+        "actionFailed": "没成功，再试一次。",
+        "jobReview": "点评",
+        "showPage": "查看",
+        "dismiss": "移除",
+        "steps": "{n} 步",
+        "act.starting": "启动中",
+        "act.thinking": "思考中",
+        "act.loading": "读取技能",
+        "act.scanning": "扫描仓库",
+        "act.reading": "阅读中",
+        "act.editing": "修改候选图",
+        "act.rendering": "渲染和检查",
+        "act.delivered": "已出图",
+        "state.starting": "启动中",
+        "state.running": "进行中",
+        "state.done": "完成",
+        "state.ended": "结束了，没有出图",
+        "state.failed": "没能开始",
+        "type.auto": "自动选择",
+        "use.auto": "拿不准就让模型选",
+        "use.architecture": "系统由哪些部分组成、怎么连接",
+        "use.workflow": "步骤、分支、审批、CI/CD",
+        "use.sequence": "谁调用谁，按先后顺序",
+        "use.dataflow": "数据从哪来、到哪去",
+        "use.lifecycle": "有哪些状态、怎么转换",
+        "use.erd": "表、字段、主外键",
+        "use.class": "类、接口、继承和依赖",
+        "use.tree": "层级拆分：模块、组织、功能",
+        "use.timeline": "事情按时间发生的顺序",
+        "use.waterfall": "时间都花在哪",
+        "use.explainer": "把一个回答做成一页",
+        "guideIntro": "Archify 能画十种图，还能把回答做成一页讲解页。下面每条都是能直接复制到任何对话里的提示词，也可以一键在新对话里打开；用自己的话说也一样。",
+        "guide.types": "图的类型",
+        "useThis": "用这个",
+        "guide.code": "从代码画",
+        "guide.code.note": "在打开了项目的会话里说（或者在「新建」里选它的文件夹）。插件一次就能扫描整个仓库，图里每个部分都可以标出对应的源码。",
+        "guide.mermaid": "从 Mermaid 转",
+        "guide.mermaid.note": "贴一段 flowchart、sequenceDiagram、stateDiagram、erDiagram 或 classDiagram：Archify 保留含义，重新画。",
+        "guide.edit": "改图",
+        "guide.edit.note": "在画这张图的会话里说。架构图由插件排版，你只要说改什么：组件、连线、分组、文字。风格有 classic（默认）、signal-flow、blueprint、editorial。",
+        "guide.compare": "前后对比",
+        "guide.compare.note": "架构的两个版本合成一张差异页，标出新增、删除和改动。",
+        "guide.explainer": "一页讲解页",
+        "guide.explainer.note": "把回答做成一页：结论在前，理由分块，可以带原生图表。想不说也自动出页，在规则里加一行：[archify explainer: proactive]（或 always-on）。",
+        "guide.brands": "品牌图标",
+        "guide.brands.note": "真实产品（AWS、Stripe、Redis、GitHub……）可以在类型图标旁带上品牌标志，在提示词里点名即可。",
+        "guide.review": "点评架构",
+        "guide.review.note": "在「图库」里选一张架构图：下面有插件的结构检查（共享数据库、热点、循环依赖、过长调用链、缺少网关等），还有一个按钮让模型深入点评。",
+        "guide.viewer": "看图",
+        "guide.viewer.note": "在页面里：按 ? 看快捷键；搜索找组件；点一个组件看它的上下游；选两个组件看它们之间的路径；菜单可导出 PNG、JPEG、WebP、明暗双主题 SVG 或 WebM 动画；可切换明暗主题和动静效果。",
+        "reviewTitle": "点评",
+        "reviewSummary": "{components} 个组件 · {connections} 条连线（{async} 条异步）· {boundaries} 个边界",
+        "askReview": "让模型深入点评",
+        "askAgain": "再点评一次",
+        "askReviewHint": "把这些发现和图发给模型（在画这张图的会话里），请它给出风险和改进建议",
+        "watchReview": "查看进度",
+        "readReview": "看点评",
+        "reviewUnavailable": "这张图没法点评（候选文件已经不在了）。",
+        "reviewClean": "图上没看出明显的结构问题。",
+        "reviewNote": "基于图的启发式检查，不看代码：每一条都是值得核实的问题，不是结论。",
+        "level.risk": "风险",
+        "level.warn": "注意",
+        "level.info": "提示",
+        "level.good": "做得好",
+        "rv.shared-store": "{n} 个服务直接用同一个数据存储「{store}」（{users}）。共享库会把服务耦合在一起，改表要多方协调；考虑按服务拆分数据，或只让一个服务直接访问。",
+        "rv.client-to-store": "客户端「{client}」直接连数据存储「{store}」，绕过了服务层的校验和权限。通常应经由后端服务访问。",
+        "rv.client-fanout": "客户端「{client}」直接调用 {n} 个内部服务（{targets}），前面没有网关。加一个 API 网关或 BFF，可以统一鉴权、限流和接口聚合。",
+        "rv.hotspot": "{n} 个部分依赖「{name}」，它可能是单点和瓶颈。确认它能水平扩展、有降级方案。",
+        "rv.wide-dependency": "「{name}」依赖 {n} 个部分，职责可能过多，其中任何一个出问题都会影响它。",
+        "rv.cycle": "同步调用形成了环：{names}。循环依赖难以分开部署和排查，考虑用事件解耦或合并边界。",
+        "rv.deep-chain": "同步调用链有 {hops} 跳：{path}。延迟和故障会逐层累积，考虑缓存、异步或减少跳数。",
+        "rv.all-sync": "{n} 个后端服务之间全是同步调用，没有消息队列。耗时或可重试的工作可以改成异步。",
+        "rv.external-deps": "调用链上有 {n} 个外部依赖（{names}）。确认有超时、重试和熔断，外部故障时能降级。",
+        "rv.no-security": "图上看不到鉴权组件或安全边界。系统里有的话可以画出来；没有的话，值得确认访问控制放在哪里。",
+        "rv.no-observability": "图上没有监控、日志或链路追踪。系统到这个规模，可观测性值得画出来或者补上。",
+        "rv.isolated": "{n} 个部分没有任何连线（{names}）：要么漏了关系，要么可以从图里拿掉。",
+        "rv.stores-owned": "{n} 个数据存储各自只被一个服务使用，数据归属清楚。",
+        "rv.gateway-front": "客户端统一经由 {gateway} 进入，入口收敛。",
+        "rv.async-decoupling": "异步工作经由 {bus}，生产者和消费者是解耦的。",
+        "reviewInPanel": "点评这张架构图（Archify 面板）",
+        "scanned": "已扫描 {root}",
+        "exampleOf": "{type}示例",
+        "looksLike": "{type}长这样",
+        "seeExample": "看完整示例",
+        "exampleNote": "Archify 自带的示例。点开就是可交互的页面：可以缩放、搜索、点组件看上下游、切换明暗主题。",
       },
     };
 
@@ -960,10 +1892,58 @@ window.__ModuleLoader__.load({
 
         ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: RENDER_TOOL, locale: NS }, withT(RenderToolView)));
         ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: CLI_TOOL, locale: NS }, withT(CliToolView)));
+        ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: SCAN_TOOL, locale: NS }, withT(ScanToolView)));
         ctx.uiConversation.events.register(pageResultDefinition);
         ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: RESULT_KIND, locale: NS }, withT(PageRow)));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 31, label: () => tr('title') }, ArchifyGlyph));
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, withT(ArchifyPanel, { sessions })));
+        // The Host's own folder dialog: the desktop shell's when there is one, else the workspace service's.
+        const directoryPicker = () => {
+          const desktop = globalThis.__DSH_DIRECTORY_PICKER__;
+          if (typeof desktop?.pick === 'function') return () => desktop.pick();
+          const ws = service('uiWorkspace');
+          return typeof ws?.pickDirectory === 'function' ? () => ws.pickDirectory() : null;
+        };
+        const samePath = (a, b) => String(a ?? '').replace(/[\\/]+$/, '') === String(b ?? '').replace(/[\\/]+$/, '');
+        const hostState = { canRun: true };
+        if (typeof fetch === 'function') {
+          void getJson(STATE_ROUTE)
+            .then((s) => {
+              if (s && typeof s.canRun === 'boolean') hostState.canRun = s.canRun;
+            })
+            .catch(() => {});
+        }
+        const env = {
+          canRun: () => hostState.canRun,
+          canPickDirectory: () => directoryPicker() !== null,
+          pickDirectory: () => (directoryPicker() ?? (() => null))(),
+          /** The Harness's workspaces, in sidebar order: the folders a person works in. */
+          workspaces: () => {
+            try {
+              const items = service('workspaces')?.list?.getSnapshot?.()?.items;
+              return Array.isArray(items) ? items.map((w) => ({ id: w.workspaceId, path: w.path, title: w.displayTitle })) : [];
+            } catch {
+              return [];
+            }
+          },
+          canOpen: () => sessions.available(),
+          openSession: (id) => sessions.open(id),
+          canDraft: () => typeof service('uiWorkspace')?.startSession === 'function',
+          /** A new conversation (in `dir`'s workspace, made when missing) with `prompt` in its composer, to send. */
+          startDraft: async (prompt, dir) => {
+            const ui = service('uiWorkspace');
+            if (typeof ui?.startSession !== 'function') return false;
+            let workspaceId;
+            if (dir) {
+              const hit = env.workspaces().find((w) => samePath(w.path, dir));
+              if (hit) workspaceId = hit.id;
+              else if (typeof service('workspaces')?.create === 'function') workspaceId = (await service('workspaces').create({ path: dir }))?.workspaceId;
+            }
+            ui.startSession(workspaceId, { prompt, whenDraftExists: 'replace' });
+            return true;
+          },
+        };
+        panelOpener.fn = () => openPanel(ctx);
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, withT(ArchifyPanel, { sessions, env })));
         if (typeof ctx.inject === 'function') {
           ctx.inject(['commandUi'], (scope) => {
             scope.effect(

@@ -11,10 +11,14 @@ included unmodified, except that test files, pre-rendered example pages,
 generator scripts and the lockfile are left out.
 
 skill/SKILL.md is a modified version of archify/SKILL.md (Apache-2.0): its
-shell commands are replaced by the plugin's archify_render and archify_cli
-tools, and its update-check and setup sections are removed, for DeepSeek
-Harness. Its Architecture authoring also asks for topology only, since the
-plugin lays the components out.
+shell commands are replaced by the plugin's archify_render, archify_scan and
+archify_cli tools, and its update-check and setup sections are removed, for
+DeepSeek Harness. Its Architecture authoring also asks for topology only, since
+the plugin lays the components out, and its repository authoring starts from
+the plugin's repository scan.
+
+assets/previews/ holds screenshots of pages Archify renders from its own
+examples (archify/examples, Apache-2.0), made by scripts/build-previews.py.
 
 vendor/elkjs/elk.bundled.js is from elkjs 0.12.1 (https://github.com/kieler/elkjs),
 the Eclipse Layout Kernel compiled to JavaScript, Copyright (c) Kiel University

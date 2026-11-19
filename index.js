@@ -15,29 +15,62 @@
  */
 
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 
 import { CLI, SKILL_ROOT, clip, outcomeOf, parseJsonOutput, runArchify } from './lib/run.mjs';
 import { WORKER, layoutReason, sidecarOf } from './lib/autolayout.mjs';
+import { citesEvidence, fixRepository, repositoryFacts } from './lib/repository.mjs';
+import { EXAMPLES, examplePage, previewFile } from './lib/examples.mjs';
+import { createJobs } from './lib/jobs.mjs';
 import { NATIVE_TYPES, TYPES, planPaths, resolveFrom, titleOf, withOutput } from './lib/paths.mjs';
+import { PICKABLE, generationPrompt, reviewPrompt, typeName } from './lib/prompts.mjs';
+import { findingLines, reviewArchitecture } from './lib/review.mjs';
+import { describeChanges, sanitize } from './lib/sanitize.mjs';
+import { scanRepo } from './lib/scan.mjs';
 import { createStore, newId } from './lib/store.mjs';
+
+/**
+ * Import one Harness package: by bare name when this directory resolves it,
+ * else from the running Harness's own module tree (a linked working copy sits
+ * outside it), else undefined (the tests).
+ */
+async function harnessModule(name) {
+  try {
+    return await import(name);
+  } catch {
+    // Not reachable from here; ask the Harness entry below.
+  }
+  try {
+    const { createRequire } = await import('node:module');
+    const { pathToFileURL } = await import('node:url');
+    for (const entry of [process.argv[1], ...process.argv.slice(2).filter((a) => a.endsWith('.js'))]) {
+      if (!entry) continue;
+      try {
+        return await import(pathToFileURL(createRequire(entry).resolve(name)).href);
+      } catch {
+        // The next candidate.
+      }
+    }
+  } catch {
+    // No module system to ask.
+  }
+  return undefined;
+}
 
 // The registry wants the compiled definition `defineTool` makes. Outside a
 // Harness (the tests) the raw definition stands in for it.
-let defineTool = (definition) => definition;
-try {
-  ({ defineTool } = await import('@deepseek-ai/dsh-tools'));
-} catch {
-  // No Harness around: tests run on the raw definition.
-}
+const defineTool = (await harnessModule('@deepseek-ai/dsh-tools'))?.defineTool ?? ((definition) => definition);
+const createUserMessage = (await harnessModule('@deepseek-ai/dsh-llm'))?.createUserMessage ?? ((input) => Object.freeze({ ...structuredClone(input), role: 'user', id: randomUUID() }));
 
 /** The tool registry is required; skills and the web server ride deferred injects. */
 export const inject = ['tools'];
 
 export const RENDER_TOOL = 'archify_render';
 export const CLI_TOOL = 'archify_cli';
+export const SCAN_TOOL = 'archify_scan';
 export const SKILL_NAME = 'archify';
 export const PROVIDER = 'dsh-archify';
 /** Packaged skills' standard precedence (`BUNDLED_SKILL_RANK` in @deepseek-ai/dsh-skill). */
@@ -49,6 +82,14 @@ const FILE_ROUTE = '/__dsh_archify/file';
 const DELETE_ROUTE = '/__dsh_archify/delete';
 const OPEN_ROUTE = '/__dsh_archify/open';
 const STATE_ROUTE = '/__dsh_archify/state';
+const PROMPT_ROUTE = '/__dsh_archify/prompt';
+const GENERATE_ROUTE = '/__dsh_archify/generate';
+const JOBS_ROUTE = '/__dsh_archify/jobs';
+const DISMISS_ROUTE = '/__dsh_archify/jobs/dismiss';
+const REVIEW_ROUTE = '/__dsh_archify/review';
+const ASK_ROUTE = '/__dsh_archify/ask';
+const PREVIEW_ROUTE = '/__dsh_archify/preview';
+const EXAMPLE_ROUTE = '/__dsh_archify/example';
 
 /** The skill file this bundle serves, beside the vendored skill it points into. */
 export const SKILL_FILE = join(SKILL_ROOT, '..', 'skill', 'SKILL.md');
@@ -73,6 +114,8 @@ export function settingsOf(config) {
     enabled: c.enabled !== false,
     skill: c.skill !== false,
     timeoutMs: Number.isFinite(timeout) && timeout >= 10_000 ? timeout : 240_000,
+    // Where a diagram of a described subject started from the panel is drawn.
+    workdir: typeof c.workdir === 'string' && c.workdir.trim() !== '' ? c.workdir.trim() : '',
   };
 }
 
@@ -245,13 +288,20 @@ export async function placeCandidate(candidate, { cwd, quality, repoRoot, signal
   return { ok: false, error: clip(run.stderr || (run.timedOut ? 'timed out' : `exit ${run.code}`), 400), ms: run.ms };
 }
 
-/** Run one `archify_render` call. */
-export async function render(ctx, store, settings, args, exec) {
+/** The quality profile a candidate names, if a valid one. */
+const metaQuality = (spec) => (spec?.meta?.quality_profile === 'standard' || spec?.meta?.quality_profile === 'showcase' ? spec.meta.quality_profile : '');
+
+/**
+ * Run one `archify_render` call.
+ * @param {{onDelivered?: (item: object) => void}} [hooks] - told about each delivered page (the panel's jobs).
+ */
+export async function render(ctx, store, settings, args, exec, hooks = {}) {
   const a = args && typeof args === 'object' ? args : {};
   const type = String(a.type ?? '').trim();
   if (!TYPES.includes(type)) throw new ToolInputError(`type must be one of: ${TYPES.join(', ')}`);
   const cwd = cwdOf(ctx, exec);
-  const quality = a.quality === 'standard' ? 'standard' : 'showcase';
+  // The call's quality, else the candidate's own profile (below), else showcase; the two then agree.
+  let quality = a.quality === 'standard' || a.quality === 'showcase' ? a.quality : '';
 
   // The draft the model sent, as the text that goes into the candidate file.
   let draft = null;
@@ -278,17 +328,30 @@ export async function render(ctx, store, settings, args, exec) {
   }
 
   const plan = planPaths({ cwd, type, candidate: hasCandidate ? a.candidate : '', output: a.output, name: a.name, title: draft ? titleOf(type, draft) : '' });
-  if (specObject) {
-    const fixed = withOutput(specObject, basename(plan.output));
-    if (fixed !== specObject) draft = `${JSON.stringify(fixed, null, 2)}\n`;
-  }
-  if (draft !== null) {
-    mkdirSync(dirname(plan.candidate), { recursive: true });
-    writeFileSync(plan.candidate, draft, 'utf8');
-  } else if (!existsSync(plan.candidate)) {
-    throw new ToolInputError(`candidate not found: ${plan.candidate}`);
-  }
+  if (draft === null && !existsSync(plan.candidate)) throw new ToolInputError(`candidate not found: ${plan.candidate}`);
   let text = draft ?? readFileSync(plan.candidate, 'utf8');
+  let write = draft !== null;
+  // Schema slips (an unknown property, a near-miss enum value, one source too many) are
+  // fixed here, in new drafts and repaired candidates alike: each would cost a repair round.
+  let adjusted = [];
+  if (type !== 'explainer') {
+    const obj = specObject ?? parseJson(text);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      quality ||= metaQuality(obj) || 'showcase';
+      const named = withOutput(obj, basename(plan.output));
+      const { spec: fixed, changes } = sanitize(type, named, { quality });
+      adjusted = describeChanges(fixed, changes);
+      if (changes.length > 0 || named !== obj) {
+        text = `${JSON.stringify(fixed, null, 2)}\n`;
+        write = true;
+      }
+    }
+  }
+  quality ||= 'showcase';
+  if (write) {
+    mkdirSync(dirname(plan.candidate), { recursive: true });
+    writeFileSync(plan.candidate, text, 'utf8');
+  }
   const title = titleOf(type, text) || plan.slug;
 
   const outDir = typeof a.outDir === 'string' && a.outDir.trim() !== '' ? resolveFrom(cwd, a.outDir) : reviewDirFor(plan.folder, plan.output);
@@ -298,6 +361,19 @@ export async function render(ctx, store, settings, args, exec) {
   const repoRoot = typeof a.repoRoot === 'string' && a.repoRoot.trim() !== '' ? resolveFrom(cwd, a.repoRoot) : citesSources(type, text) ? await gitRoot(cwd) : '';
   if (repoRoot) cliArgs.push('--repo-root', repoRoot);
   if (outDir) cliArgs.push('--out-dir', outDir);
+
+  // Source evidence pins the checkout's own origin and commit: the tool knows them, so it writes them.
+  if (type !== 'explainer') {
+    const obj = parseJson(text);
+    if (citesEvidence(type, obj)) {
+      const { spec: pinned, changes } = await fixRepository(type, obj, await repositoryFacts(repoRoot));
+      if (changes.length > 0) {
+        text = `${JSON.stringify(pinned, null, 2)}\n`;
+        writeFileSync(plan.candidate, text, 'utf8');
+        adjusted.push(...changes);
+      }
+    }
+  }
 
   // An Architecture draft without positions is placed here, so the model writes
   // topology only and never repairs coordinates.
@@ -345,6 +421,11 @@ export async function render(ctx, store, settings, args, exec) {
       updatedAt: Date.now(),
     });
     id = item.id;
+    try {
+      hooks.onDelivered?.(item);
+    } catch {
+      // Following a job is a convenience.
+    }
   }
   return {
     ok: outcome.ok,
@@ -361,6 +442,7 @@ export async function render(ctx, store, settings, args, exec) {
     ...(id ? { id, version, aspect } : {}),
     ...(failures > 0 ? { failures } : {}),
     ...(layout ? { layout } : {}),
+    ...(adjusted.length > 0 ? { adjusted } : {}),
     ms: run.ms + (layout?.ms ?? 0),
     receipt: receipt ?? null,
     ...(receipt ? {} : { stdout: clip(run.stdout, 6000), stderr: clip(run.stderr, 6000), exitCode: run.code ?? -1, timedOut: run.timedOut }),
@@ -375,9 +457,11 @@ export function renderResult(_args, value) {
     .join(', ');
   const lines = [];
   const placedNow = v.layout?.ok === true;
+  const fixedNote = Array.isArray(v.adjusted) && v.adjusted.length > 0 ? `Before checking, the tool made these fixes to the candidate (saved in the file): ${v.adjusted.join('; ')}.` : '';
   if (v.ok) {
     lines.push(`Delivered the ${v.type} page "${v.title}" at ${v.output} (candidate ${v.candidate}). Gates: ${gates}.`);
     if (placedNow) lines.push(`The components were laid out automatically (${v.layout.width}×${v.layout.height}px); their pos and size are now in the candidate.`);
+    if (fixedNote) lines.push(fixedNote);
     lines.push('This page is the deliverable and the user already sees it in the conversation (interactive, with full screen, open in browser and download) and in the Archify panel. Reply now, as the skill\'s Output section says, without repeating the path. Do not run visual checks, captures or another layout round unless the user asks for one.');
     const r = v.receipt ?? {};
     const review = r.visualReviewRecommendation ?? r.layoutReviewRecommendation;
@@ -386,6 +470,7 @@ export function renderResult(_args, value) {
     if (warnings.length > 0 || r.writing) lines.push(`Warnings to mention only if they change how the page reads: ${clip(JSON.stringify({ warnings, writing: r.writing }), 3000)}`);
   } else if (v.receipt) {
     lines.push(`Archify stopped at ${v.failedStage || v.status}${gates ? ` (gates: ${gates})` : ''}. Nothing was delivered.`);
+    if (fixedNote) lines.push(`${fixedNote} The diagnostics below are what remains.`);
     if (placedNow) {
       lines.push('The components were laid out automatically before this run. Fix what the diagnostics name in the text or topology (components, connections, boundaries), never the coordinates: a render after such an edit lays the candidate out again. If only placement diagnostics remain (composition, clean-flow, label or route clearance), set meta.quality_profile to "standard" and render with quality "standard" and relayout true.');
     } else if (v.layout && v.layout.ok === false) {
@@ -409,7 +494,7 @@ export function renderResult(_args, value) {
   return [{ type: 'text', text: lines.join('\n') }];
 }
 
-export function buildRenderTool(ctx, store, settings) {
+export function buildRenderTool(ctx, store, settings, hooks = {}) {
   return defineTool({
     name: RENDER_TOOL,
     description:
@@ -417,6 +502,7 @@ export function buildRenderTool(ctx, store, settings) {
       'New request: pass the complete candidate as `spec` (JSON object; for type explainer, the Markdown draft as `markdown`) and a short Latin `name`; the tool writes it to `.archify/<type>-<name>-<timestamp>/` under the working directory and delivers the page next to it. ' +
       'Architecture: leave out pos, size, row/col and route hints; the tool lays the components out (boundaries as groups) before checking, and writes the positions into the candidate. ' +
       'Repair: edit that candidate file in place, then call again with `candidate` set to its path. ' +
+      'Before checking, the tool fixes plain schema slips itself (unknown properties, near-miss enum values, too many sources) and says what it changed. ' +
       'It runs validate, deliver, a strict check and a real-browser check, and returns the compact receipt: on failure its diagnostics say what to fix. A delivered page is shown to the user in the conversation and in the Archify panel.',
     parameters: {
       type: { type: 'string', required: true, enum: TYPES, description: `Diagram type: ${NATIVE_TYPES.join(', ')}; or explainer for a one-page answer.` },
@@ -424,7 +510,7 @@ export function buildRenderTool(ctx, store, settings) {
       markdown: { type: 'string', description: 'For type explainer: the complete candidate.archify.md draft. Leave out when passing `candidate`.' },
       candidate: { type: 'string', description: 'Path of an existing candidate file (relative to the working directory, absolute or ~/…): to re-render after editing it in place. With `spec`/`markdown` too, that file is overwritten first.' },
       name: { type: 'string', description: 'Short Latin kebab-case name for a new folder and page, e.g. checkout-flow. Leave out to derive it from the title.' },
-      quality: { type: 'string', enum: ['showcase', 'standard'], description: 'Must match meta.quality_profile. Default showcase.' },
+      quality: { type: 'string', enum: ['showcase', 'standard'], description: 'Default: the candidate\'s meta.quality_profile, else showcase. The tool sets meta.quality_profile to match.' },
       relayout: { type: 'boolean', description: 'For type architecture: lay every component out afresh, dropping the positions and route hints in the candidate. Not needed for a draft without positions (always laid out), or after editing the topology of a candidate this tool laid out (laid out again by itself).' },
       repoRoot: { type: 'string', description: 'For a repository-backed diagram whose repository is not the working directory\'s Git root: the root its source evidence points into. Default: that Git root, when the candidate cites sources.' },
       output: { type: 'string', description: 'Page path, only when the user names one. Default: <name>.html beside the candidate.' },
@@ -447,6 +533,7 @@ export function buildRenderTool(ctx, store, settings) {
           candidate: String(v.candidate ?? ''),
           ms: Number(v.ms) || 0,
           autoLayout: v.layout?.ok === true,
+          adjusted: Array.isArray(v.adjusted) ? v.adjusted.length : 0,
           ...(v.id ? { id: String(v.id), version: String(v.version ?? ''), aspect: Number(v.aspect) || 0 } : {}),
           ...(v.receipt && !v.ok && Array.isArray(v.receipt.diagnostics)
             ? {
@@ -459,7 +546,7 @@ export function buildRenderTool(ctx, store, settings) {
     },
     timeoutMs: settings.timeoutMs + 15_000,
     isConcurrencySafe: () => true,
-    execute: (args, exec) => render(ctx, store, settings, args, exec),
+    execute: (args, exec) => render(ctx, store, settings, args, exec, hooks),
   });
 }
 
@@ -501,6 +588,158 @@ export function buildCliTool(ctx, settings) {
   });
 }
 
+/** Run one `archify_scan` call. */
+export async function scan(ctx, args, exec) {
+  const cwd = cwdOf(ctx, exec);
+  const dir = typeof args?.path === 'string' && args.path.trim() !== '' ? resolveFrom(cwd, args.path) : cwd;
+  let ok = false;
+  try {
+    ok = statSync(dir).isDirectory();
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new ToolInputError(`not a folder: ${dir}`);
+  const started = Date.now();
+  const result = await scanRepo(dir);
+  return { root: result.root, revision: result.facts.revision, remote: result.facts.remote, text: result.text, ms: Date.now() - started };
+}
+
+export function buildScanTool(ctx) {
+  return defineTool({
+    name: SCAN_TOOL,
+    description:
+      'Overview of a code repository for an Archify diagram, in one call: the Git remote and revision (for meta.repository and cited sources), the folder tree with file counts, languages, manifests with their dependencies, Docker Compose services, Dockerfiles, Kubernetes objects, Terraform resources, CI workflows, configuration key names (never values) and the opening of the README. ' +
+      'Call it first when drawing a codebase, instead of listing folders and opening manifests one by one; then read only the source files you will cite.',
+    parameters: {
+      path: { type: 'string', description: 'A folder in the repository (relative to the working directory, absolute or ~/…); its Git root is scanned. Default: the working directory.' },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true, properties: { text: { type: 'string', required: true } } },
+      render: (_a, v) => [{ type: 'text', text: String(v?.text ?? '') }],
+      presentationMeta: (_a, v) => ({ archifyScan: true, root: String(v?.root ?? ''), chars: String(v?.text ?? '').length, ms: Number(v?.ms) || 0 }),
+    },
+    timeoutMs: 30_000,
+    isConcurrencySafe: () => true,
+    execute: (args, exec) => scan(ctx, args, exec),
+  });
+}
+
+// --- the panel's own runs: a new diagram, a review ------------------------------------
+
+/** What `service` in the Host gives, or undefined. */
+const service = (ctx, name) => {
+  try {
+    return ctx.get?.(name);
+  } catch {
+    return undefined;
+  }
+};
+
+/** A folder the person typed or picked: absolute, `~/…` expanded, and an existing directory. */
+export function folderOf(input) {
+  const raw = String(input ?? '').trim();
+  if (raw === '') return '';
+  const dir = raw === '~' ? homedir() : raw.startsWith('~/') ? join(homedir(), raw.slice(2)) : raw;
+  if (!isAbsolute(dir)) throw new ToolInputError('give the folder as an absolute path');
+  let ok = false;
+  try {
+    ok = statSync(dir).isDirectory();
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new ToolInputError(`not a folder: ${dir}`);
+  return dir;
+}
+
+/**
+ * The panel's runs. Each starts a conversation of its own (in the project's
+ * workspace, or in the plugin's own folder for a described subject), sends
+ * the prompt as the person's first message, and is followed in `jobs`.
+ */
+export function createRunner(ctx, { jobs, store, workdir }) {
+  async function placeOf(dir) {
+    const folder = dir || workdir;
+    mkdirSync(folder, { recursive: true });
+    const reg = service(ctx, 'workspaceRegistry');
+    const ws = reg?.create ? await reg.create(folder, dir ? basename(dir) : 'Archify').catch(() => undefined) : undefined;
+    return ws?.id ? { workspaceId: ws.id } : { cwd: folder };
+  }
+
+  /** Send `text` to a conversation (a new one when `sessionId` is not given or is gone). */
+  async function send({ text, title, dir, sessionId }) {
+    const controller = service(ctx, 'sessionController');
+    if (!controller?.create || !controller?.resolveAgent) throw new Error('this Harness cannot start conversations from a plugin');
+    let id = sessionId;
+    let found = id ? await controller.resolveAgent(id).catch((error) => ({ error })) : null;
+    if (!found || 'error' in found) {
+      id = `session-${randomUUID()}`;
+      await controller.create({ sessionId: id, ...(await placeOf(dir)) });
+      found = await controller.resolveAgent(id);
+      if ('error' in found) throw found.error;
+      try {
+        if (title) service(ctx, 'sessionTitle')?.rename?.(found.agent.session, title);
+      } catch {
+        // A title is cosmetic.
+      }
+    }
+    const agent = found.agent;
+    const message = createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
+    if (typeof agent.followup === 'function') agent.followup(message);
+    else if (typeof agent.steer === 'function') agent.steer(message);
+    else throw new Error('this Harness cannot send a message from a plugin');
+    try {
+      await service(ctx, 'sessions')?.flush?.(agent.session);
+    } catch {
+      // Ordinary persistence follows.
+    }
+    return id;
+  }
+
+  return {
+    /** The prompt for a new diagram (with the repository's scan when `scanned`). */
+    async prompt(body, { scanned = false } = {}) {
+      const dir = folderOf(body.dir);
+      const type = PICKABLE.includes(body.type) ? body.type : 'auto';
+      const digest = dir && scanned ? (await scanRepo(dir)).text : '';
+      return { dir, type, prompt: generationPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', type, focus: String(body.focus ?? ''), dir, quality: body.quality === 'standard' ? 'standard' : 'showcase', digest }) };
+    },
+    /** Start a new diagram in a conversation of its own. */
+    async generate(body) {
+      const { dir, type, prompt } = await this.prompt(body, { scanned: true });
+      const focus = String(body.focus ?? '').trim().slice(0, 200);
+      const lang = body.lang === 'zh' ? 'zh' : 'en';
+      const title = ['Archify', type === 'auto' ? '' : typeName(type, lang), dir ? basename(dir) : focus.slice(0, 40)].filter(Boolean).join(' · ');
+      const job = jobs.create({ kind: 'diagram', type, dir, focus, lang, title });
+      try {
+        const sessionId = await send({ text: prompt, title, dir });
+        jobs.update(job.id, { sessionId, state: 'running', activity: 'thinking', seenAt: Date.now() });
+        return { ok: true, job: jobs.get(job.id) };
+      } catch (error) {
+        jobs.update(job.id, { state: 'failed', error: String(error?.message ?? error).slice(0, 300), endedAt: Date.now() });
+        return { ok: false, reason: String(error?.message ?? error), job: jobs.get(job.id) };
+      }
+    },
+    /** Ask for a review of a delivered Architecture, in the conversation that drew it when it is still there. */
+    async review(body) {
+      const item = store.get(String(body.id ?? ''));
+      if (!item) return { ok: false, reason: 'missing' };
+      const spec = parseJson(readText(item.candidate));
+      const checks = item.type === 'architecture' && spec ? reviewArchitecture(spec) : { findings: [] };
+      const repo = item.cwd && spec && citesSources(item.type, JSON.stringify(spec)) ? await gitRoot(item.cwd) : '';
+      const text = reviewPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', title: item.title, candidate: item.candidate, findings: findingLines(checks), repo });
+      const job = jobs.create({ kind: 'review', type: item.type, dir: item.cwd, title: `Archify · ${body.lang === 'zh' ? '点评' : 'review'} · ${item.title}`, pageId: item.id });
+      try {
+        const sessionId = await send({ text, title: job.title, dir: item.cwd, sessionId: body.newConversation === true ? '' : item.sessionId });
+        jobs.update(job.id, { sessionId, state: 'running', activity: 'thinking', seenAt: Date.now() });
+        return { ok: true, job: jobs.get(job.id) };
+      } catch (error) {
+        jobs.update(job.id, { state: 'failed', error: String(error?.message ?? error).slice(0, 300), endedAt: Date.now() });
+        return { ok: false, reason: String(error?.message ?? error), job: jobs.get(job.id) };
+      }
+    },
+  };
+}
+
 // --- the plugin ---------------------------------------------------------------------
 
 /**
@@ -512,10 +751,33 @@ export function apply(ctx, config) {
   const settings = settingsOf(config);
   const dir = join(homeDir(), 'cache', 'archify');
   const store = createStore(dir);
+  const jobs = createJobs(dir);
+  const runner = createRunner(ctx, { jobs, store, workdir: settings.workdir || join(homeDir(), 'archify', 'workspace') });
 
   if (settings.enabled && typeof ctx.tools?.register === 'function') {
-    ctx.effect(() => ctx.tools.register(buildRenderTool(ctx, store, settings)));
+    const hooks = { onDelivered: (item) => jobs.delivered(item.sessionId, item.id) };
+    ctx.effect(() => ctx.tools.register(buildRenderTool(ctx, store, settings, hooks)));
     ctx.effect(() => ctx.tools.register(buildCliTool(ctx, settings)));
+    ctx.effect(() => ctx.tools.register(buildScanTool(ctx)));
+  }
+
+  // The panel follows the conversations it started: their tool calls, and their end.
+  if (typeof ctx.on === 'function') {
+    ctx.on('session/event', (session, event) => {
+      try {
+        if (event?.type === 'tool/call' && session?.id) jobs.noteCall(session.id, event.data?.name);
+      } catch {
+        // Following a job is a convenience.
+      }
+    });
+    ctx.on('agent/status', (payload) => {
+      try {
+        const sid = payload?.agent?.session?.id;
+        if (sid && payload.status === 'idle') jobs.idle(sid);
+      } catch {
+        // Ignored.
+      }
+    });
   }
 
   if (settings.skill && typeof ctx.inject === 'function') {
@@ -546,7 +808,42 @@ export function apply(ctx, config) {
       webServer.register({
         kind: 'exact',
         path: STATE_ROUTE,
-        handler: (_req, res) => serveJson(res, () => ({ total: store.size(), tools: settings.enabled, upstream: upstream() })),
+        handler: (_req, res) =>
+          serveJson(res, () => ({ total: store.size(), tools: settings.enabled, canRun: typeof service(ctx, 'sessionController')?.create === 'function', home: homedir(), upstream: upstream() })),
+      }),
+    );
+    // A thrown input error is an answer the panel shows, not a server failure.
+    const answer = (produce) => async (body) => {
+      try {
+        return await produce(body);
+      } catch (error) {
+        return { ok: false, reason: String(error?.message ?? error) };
+      }
+    };
+    scope.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: PROMPT_ROUTE,
+        handler: (req, res) => postJson(req, res, answer(async (body) => ({ ok: true, ...(await runner.prompt(body)) }))),
+      }),
+    );
+    scope.effect(() => webServer.register({ kind: 'exact', path: GENERATE_ROUTE, handler: (req, res) => postJson(req, res, answer((body) => runner.generate(body))) }));
+    scope.effect(() => webServer.register({ kind: 'exact', path: ASK_ROUTE, handler: (req, res) => postJson(req, res, answer((body) => runner.review(body))) }));
+    scope.effect(() => webServer.register({ kind: 'exact', path: JOBS_ROUTE, handler: (_req, res) => serveJson(res, () => ({ jobs: jobs.list(12) })) }));
+    scope.effect(() => webServer.register({ kind: 'exact', path: DISMISS_ROUTE, handler: (req, res) => postJson(req, res, (body) => ({ ok: jobs.remove(String(body.id ?? '')) })) }));
+    scope.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: REVIEW_ROUTE,
+        handler: (req, res) =>
+          serveJson(res, () => {
+            const url = new URL(req.url ?? '/', 'http://localhost');
+            const item = store.get(url.searchParams.get('id') ?? '');
+            if (!item) return { supported: false, reason: 'missing', findings: [] };
+            const spec = parseJson(readText(item.candidate));
+            if (!spec) return { supported: false, reason: 'no-candidate', findings: [] };
+            return reviewArchitecture(spec);
+          }),
       }),
     );
     scope.effect(() =>
@@ -563,6 +860,43 @@ export function apply(ctx, config) {
       }),
     );
     scope.effect(() => webServer.register({ kind: 'prefix', path: FILE_ROUTE, handler: (req, res) => servePage(store, req, res) }));
+    // What each diagram type looks like: a thumbnail, and its example as a live page.
+    scope.effect(() =>
+      webServer.register({
+        kind: 'prefix',
+        path: PREVIEW_ROUTE,
+        handler: (req, res) => {
+          const name = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname.slice(PREVIEW_ROUTE.length + 1));
+          const file = previewFile(name);
+          if (!file) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'image/webp');
+          res.setHeader('cache-control', 'public, max-age=86400');
+          res.setHeader('x-content-type-options', 'nosniff');
+          if (req.method === 'HEAD') return void res.end();
+          createReadStream(file).on('error', () => res.end()).pipe(res);
+        },
+      }),
+    );
+    scope.effect(() =>
+      webServer.register({
+        kind: 'prefix',
+        path: EXAMPLE_ROUTE,
+        handler: (req, res) => {
+          const type = new URL(req.url ?? '/', 'http://localhost').pathname.slice(EXAMPLE_ROUTE.length + 1).split('/')[0];
+          if (!EXAMPLES[type]) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          void examplePage(type, dir).then((file) => streamPage(req, res, file), () => streamPage(req, res, ''));
+        },
+      }),
+    );
     scope.effect(() =>
       webServer.register({
         kind: 'exact',
@@ -587,7 +921,10 @@ export function apply(ctx, config) {
   if (typeof ctx.inject === 'function') ctx.inject(['webServer'], mountRoutes);
   else if (ctx.webServer) mountRoutes({ webServer: ctx.webServer, effect: (fn) => ctx.effect(fn) });
 
-  ctx.effect(() => () => store.flush());
+  ctx.effect(() => () => {
+    store.flush();
+    jobs.flush();
+  });
 }
 
 /** One gallery item as the page sees it. */
@@ -599,6 +936,7 @@ function publicItem(item) {
     path: item.html,
     folder: dirname(item.html),
     sessionId: item.sessionId,
+    cwd: item.cwd ?? '',
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     gates: item.gates,
@@ -628,7 +966,13 @@ export const PAGE_HEADERS = {
 function servePage(store, req, res) {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const id = decodeURIComponent(url.pathname.slice(FILE_ROUTE.length + 1)).split('/')[0];
-  const item = store.get(id);
+  streamPage(req, res, store.get(id)?.html ?? '');
+}
+
+/** Stream one page file in its sandbox, or say it is gone. */
+function streamPage(req, res, file) {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const item = file ? { html: file } : null;
   let size = 0;
   try {
     if (item?.html) size = statSync(item.html).size;
