@@ -367,9 +367,16 @@ test('New starts a diagram from a folder and a type in one click, and follows it
   const frame = findAll(tree, (n) => n.type === 'iframe')[0];
   assert.match(frame.props.src, /^\/__dsh_archify\/example\/sequence\?/);
   assert.match(text(by(tree, 'data-dsh-archify-fullscreen', 'example-sequence')[0]).join(''), /时序图示例/);
-  // A described subject needs a description, not a folder.
-  by(tree, 'data-dsh-archify-mode', 'describe')[0].props.onClick(ev);
+  // With a folder the run reads its code; cleared, only the description is drawn, and it is needed.
+  assert.equal(by(tree, 'data-dsh-archify-run-kind')[0].props['data-dsh-archify-run-kind'], 'code');
+  assert.match(text(by(tree, 'data-dsh-archify-run-kind')[0]).join(''), /shop 的代码/);
+  by(tree, 'data-dsh-archify-folder-clear')[0].props.onClick(ev);
   tree = render();
+  assert.equal(by(tree, 'data-dsh-archify-run-kind')[0].props['data-dsh-archify-run-kind'], 'describe');
+  by(tree, 'data-dsh-archify-focus')[0].props.onChange({ target: { value: '' } });
+  tree = render();
+  assert.equal(generate().props.disabled, true, 'nothing to draw yet');
+  assert.match(text(by(tree, 'data-dsh-archify-actions')[0]).join(''), /选一个项目文件夹，或者写下要画什么/);
   assert.ok(by(tree, 'data-dsh-archify-draft')[0], 'Open in a conversation is offered');
 });
 

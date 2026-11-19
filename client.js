@@ -907,8 +907,8 @@ window.__ModuleLoader__.load({
     /** New: a project folder or a description, a type, a focus; then one click. */
     function NewView({ t, env, jobs, onJob, onShowPage, onDismiss, seed, wide }) {
       const lang = langOf(t);
-      const [mode, setMode] = useState(seed?.mode ?? 'repo');
-      const [dir, setDir] = useState(seed?.dir ?? '');
+      // One form: a project folder makes it a diagram of that code; without one, of the description.
+      const [dir, setDir] = useState(seed?.mode === 'describe' ? '' : seed?.dir ?? '');
       const [type, setType] = useState(seed?.type ?? 'architecture');
       const [hover, setHover] = useState('');
       const [focus, setFocus] = useState(seed?.focus ?? '');
@@ -924,14 +924,16 @@ window.__ModuleLoader__.load({
       // A Guide example or a gallery action fills the form.
       if (seed && seed.at !== seedKey.current) {
         seedKey.current = seed.at;
-        if (seed.mode) setMode(seed.mode);
+        // A described example draws that description, not the folder's code.
+        if (seed.mode === 'describe') setDir('');
         if (seed.type) setType(seed.type);
         if (seed.focus !== undefined) setFocus(seed.focus);
         if (seed.dir !== undefined) setDir(seed.dir);
       }
-      const folder = mode === 'repo' ? dir.trim() : '';
+      const folder = dir.trim();
+      const fromCode = folder !== '';
       const body = { dir: folder, type, focus, quality, lang };
-      const ready = (mode === 'repo' ? folder !== '' : focus.trim() !== '') && !(mode === 'repo' && folderError);
+      const ready = fromCode ? !folderError : focus.trim() !== '';
 
       // The prompt as it will be sent, and whether the folder is there, follow the form as it changes.
       useEffect(() => {
@@ -944,7 +946,7 @@ window.__ModuleLoader__.load({
             .catch(() => setPreview(''));
         }, 300);
         return () => clearTimeout(timer);
-      }, [mode, dir, type, focus, quality, lang]);
+      }, [dir, type, focus, quality, lang]);
 
       const promptNow = () => postJson(PROMPT_ROUTE, body).then((r) => (r?.ok ? r.prompt : Promise.reject(new Error(r?.reason || t('actionFailed')))));
       const generate = () => {
@@ -990,7 +992,7 @@ window.__ModuleLoader__.load({
       };
 
       const recent = (env?.workspaces?.() ?? []).filter((w) => w.path).slice(0, 8);
-      const examples = (EXAMPLES[lang] ?? EXAMPLES.en)[type]?.[mode === 'repo' ? 'repo' : 'desc'] ?? [];
+      const examples = (EXAMPLES[lang] ?? EXAMPLES.en)[type]?.[fromCode ? 'repo' : 'desc'] ?? [];
       const canRun = env?.canRun?.() !== false;
       const shownType = hover || type;
       const mine = (jobs ?? []).filter((j) => j.kind === 'diagram');
@@ -1020,32 +1022,21 @@ window.__ModuleLoader__.load({
         { style: { flex: 1, minWidth: 0, maxWidth: wide ? 640 : 'none', display: 'flex', flexDirection: 'column', gap: 22 } },
         h(
           Step,
-          { n: 1, title: t('newWhat') },
+          { n: 1, title: t('newFrom'), aside: t('newFromHint') },
           h(
             'div',
-            { style: { display: 'flex', gap: 6 } },
-            h(Chip, { on: mode === 'repo', onClick: () => setMode('repo'), 'data-dsh-archify-mode': 'repo' }, t('modeRepo')),
-            h(Chip, { on: mode === 'describe', onClick: () => setMode('describe'), 'data-dsh-archify-mode': 'describe' }, t('modeDescribe')),
+            { style: { display: 'flex', gap: 8 } },
+            h('input', { type: 'text', value: dir, placeholder: t('folderPlaceholder'), spellCheck: false, onChange: (e) => setDir(e.target.value), 'data-dsh-archify-folder': true, style: { ...fieldStyle, flex: 1, minWidth: 0, fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 12 } }),
+            fromCode ? h(Btn, { onClick: () => setDir(''), 'data-dsh-archify-folder-clear': true, title: t('clearFolderHint') }, t('clearFolder')) : null,
+            env?.canPickDirectory?.() ? h(Btn, { onClick: pick, 'data-dsh-archify-pick': true }, h(FolderIcon, { size: 14 }), t('pickFolder')) : null,
           ),
-          mode === 'repo'
+          folder && folderError ? h('span', { 'data-dsh-archify-folder-error': true, style: { fontSize: 12, color: C.error } }, t('folderMissing')) : null,
+          recent.length > 0
             ? h(
                 'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: 8 } },
-                  h('input', { type: 'text', value: dir, placeholder: t('folderPlaceholder'), spellCheck: false, onChange: (e) => setDir(e.target.value), 'data-dsh-archify-folder': true, style: { ...fieldStyle, flex: 1, minWidth: 0, fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 12 } }),
-                  env?.canPickDirectory?.() ? h(Btn, { onClick: pick, 'data-dsh-archify-pick': true }, h(FolderIcon, { size: 14 }), t('pickFolder')) : null,
-                ),
-                folder && folderError ? h('span', { 'data-dsh-archify-folder-error': true, style: { fontSize: 12, color: C.error } }, t('folderMissing')) : null,
-                recent.length > 0
-                  ? h(
-                      'div',
-                      { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
-                      h('span', { style: { fontSize: 11.5, color: C.faint } }, t('recentFolders')),
-                      recent.map((w) => h(Chip, { key: w.path, on: dir === w.path, title: w.path, onClick: () => setDir(w.path) }, w.title || baseName(w.path))),
-                    )
-                  : null,
+                { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+                h('span', { style: { fontSize: 11.5, color: C.faint } }, t('recentFolders')),
+                recent.map((w) => h(Chip, { key: w.path, on: dir === w.path, title: w.path, onClick: () => setDir(dir === w.path ? '' : w.path) }, w.title || baseName(w.path))),
               )
             : null,
         ),
@@ -1058,8 +1049,14 @@ window.__ModuleLoader__.load({
         ),
         h(
           Step,
-          { n: 3, title: mode === 'repo' ? t('newFocusRepo') : t('newFocusDescribe'), aside: mode === 'repo' ? t('optional') : null },
-          h('textarea', { value: focus, rows: mode === 'repo' ? 2 : 4, placeholder: examples[0] ?? '', onChange: (e) => setFocus(e.target.value), 'data-dsh-archify-focus': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
+          { n: 3, title: t('newWhatToDraw'), aside: fromCode ? t('optional') : t('required') },
+          h('textarea', { value: focus, rows: fromCode ? 2 : 4, placeholder: examples[0] ?? '', onChange: (e) => setFocus(e.target.value), 'data-dsh-archify-focus': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
+          h(
+            'div',
+            { 'data-dsh-archify-run-kind': fromCode ? 'code' : 'describe', style: { display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12, lineHeight: 1.55, color: C.muted, padding: '7px 10px', borderRadius: 8, background: C.layer2 } },
+            h('span', { style: { flex: 'none', color: C.label } }, fromCode ? h(FolderIcon, { size: 14 }) : h(ChatIcon, { size: 14 })),
+            h('span', null, fromCode ? t('runFromCode', { name: baseName(folder) }) : t('runFromText')),
+          ),
           examples.length > 0
             ? h(
                 'div',
@@ -1088,7 +1085,7 @@ window.__ModuleLoader__.load({
             'div',
             { 'data-dsh-archify-side': true, style: { width: 380, flex: 'none', position: 'sticky', top: 0, display: 'flex', flexDirection: 'column', gap: 12 } },
             h(TypePreview, { t, type: shownType, onOpen: setExample }),
-            showPrompt ? h(PromptPreview, { t, text: preview, scanned: mode === 'repo', onClose: () => setShowPrompt(false) }) : null,
+            showPrompt ? h(PromptPreview, { t, text: preview, scanned: fromCode, onClose: () => setShowPrompt(false) }) : null,
             mine.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, h('span', { style: { fontSize: 11.5, color: C.faint, fontWeight: 600 } }, t('runs')), h(Jobs, { t, jobs: mine, env, onShowPage, onDismiss })) : null,
           )
         : null;
@@ -1096,13 +1093,13 @@ window.__ModuleLoader__.load({
       const hint = error
         ? h('span', { style: { fontSize: 12, color: C.error } }, error)
         : !ready
-          ? h('span', { style: { fontSize: 12, color: mode === 'repo' && folderError && folder ? C.error : C.faint } }, mode === 'repo' ? (folderError && folder ? t('folderMissing') : t('needFolder')) : t('needFocus'))
+          ? h('span', { style: { fontSize: 12, color: fromCode && folderError ? C.error : C.faint } }, fromCode && folderError ? t('folderMissing') : t('needSomething'))
           : null;
       const footer = h(
         'div',
         { 'data-dsh-archify-actions': true, style: { flex: 'none', borderTop: `1px solid ${C.border1}`, background: C.base, padding: '10px 22px 12px', display: 'flex', flexDirection: 'column', gap: 8 } },
         // Narrow: the prompt and the latest run show here, above the buttons, where they are seen.
-        !wide && showPrompt ? h(PromptPreview, { t, text: preview, scanned: mode === 'repo', onClose: () => setShowPrompt(false), maxHeight: 160 }) : null,
+        !wide && showPrompt ? h(PromptPreview, { t, text: preview, scanned: fromCode, onClose: () => setShowPrompt(false), maxHeight: 160 }) : null,
         !wide && latest ? h(JobRow, { t, job: latest, env, onShowPage, onDismiss }) : null,
         h(
           'div',
@@ -1682,16 +1679,11 @@ window.__ModuleLoader__.load({
         "tabGallery": "Gallery",
         "tabGuide": "Guide",
         "tabNewLong": "Draw a new diagram",
-        "newWhat": "What to draw",
-        "modeRepo": "A codebase",
-        "modeDescribe": "A description",
         "folderPlaceholder": "Project folder, e.g. /Users/me/code/shop",
         "pickFolder": "Choose…",
         "pickFailed": "The folder dialog could not open; type the path instead.",
         "recentFolders": "Recent:",
         "newType": "Diagram type",
-        "newFocusRepo": "Focus",
-        "newFocusDescribe": "Describe it",
         "optional": "optional: leave empty for the whole picture",
         "examples": "Examples:",
         "newQuality": "Quality",
@@ -1707,8 +1699,6 @@ window.__ModuleLoader__.load({
         "openInChatHint": "A new conversation in that folder with this prompt in the composer, for you to send",
         "copyPrompt": "Copy the prompt",
         "showPrompt": "Show the prompt",
-        "needFolder": "Pick or type the project folder.",
-        "needFocus": "Describe what to draw, or pick an example.",
         "scanNote": "Generate also attaches the plugin's scan of the repository (folders, manifests, deployment files, Git revision), so the model skips listing it.",
         "actionFailed": "That did not work. Try again.",
         "jobReview": "Review",
@@ -1791,6 +1781,15 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "Asynchronous work goes through {bus}, so producers and consumers are decoupled.",
         "reviewInPanel": "Review this architecture (Archify panel)",
         "scanned": "scanned {root}",
+        "newFrom": "From a project",
+        "newFromHint": "optional: without a folder, only your description is drawn",
+        "newWhatToDraw": "What to draw",
+        "required": "required without a project",
+        "clearFolder": "Clear",
+        "clearFolderHint": "Draw from the description only",
+        "runFromCode": "The model reads the code of {name} (the plugin scans it first), cites the files it is drawn from and pins the commit. About one to two minutes. Leave the box empty for the whole picture.",
+        "runFromText": "Only what you write is drawn; no file is read, so it can be any system, a plan, or something that is not software. About half a minute.",
+        "needSomething": "Pick a project folder, or write what to draw.",
         "folderMissing": "There is no folder at this path.",
         "reviewCount": "Review · {n}",
         "reviewOpenHint": "The structural review of this architecture, beside the drawing",
@@ -1862,16 +1861,11 @@ window.__ModuleLoader__.load({
         "tabGallery": "图库",
         "tabGuide": "用法",
         "tabNewLong": "画一张新图",
-        "newWhat": "画什么",
-        "modeRepo": "代码仓库",
-        "modeDescribe": "按描述画",
         "folderPlaceholder": "项目文件夹，例如 /Users/me/code/shop",
         "pickFolder": "选择…",
         "pickFailed": "打不开文件夹对话框，直接输入路径吧。",
         "recentFolders": "最近：",
         "newType": "图的类型",
-        "newFocusRepo": "重点",
-        "newFocusDescribe": "描述一下",
         "optional": "可选：留空就画整体",
         "examples": "例子：",
         "newQuality": "质量",
@@ -1887,8 +1881,6 @@ window.__ModuleLoader__.load({
         "openInChatHint": "在那个文件夹开一个新会话，提示词填进输入框，你确认后发送",
         "copyPrompt": "复制提示词",
         "showPrompt": "查看提示词",
-        "needFolder": "选择或输入项目文件夹。",
-        "needFocus": "描述要画什么，或者点一个例子。",
         "scanNote": "点「生成」时会附上插件对仓库的扫描（目录、清单、部署文件、Git 版本），模型不用再逐个列目录。",
         "actionFailed": "没成功，再试一次。",
         "jobReview": "点评",
@@ -1971,6 +1963,15 @@ window.__ModuleLoader__.load({
         "rv.async-decoupling": "异步工作经由 {bus}，生产者和消费者是解耦的。",
         "reviewInPanel": "点评这张架构图（Archify 面板）",
         "scanned": "已扫描 {root}",
+        "newFrom": "从哪个项目画",
+        "newFromHint": "可选：不选就只按你的描述画",
+        "newWhatToDraw": "要画什么",
+        "required": "没选项目时必填",
+        "clearFolder": "清除",
+        "clearFolderHint": "不用项目，只按描述画",
+        "runFromCode": "模型会读 {name} 的代码（插件先扫描一遍），图里标出依据的源码并固定在当前提交上。大约 1–2 分钟。留空就画整体结构。",
+        "runFromText": "只画你写的内容，不读任何文件：可以是任何系统、一个方案，甚至不是软件的东西。大约半分钟。",
+        "needSomething": "选一个项目文件夹，或者写下要画什么。",
         "folderMissing": "这个路径下没有文件夹。",
         "reviewCount": "点评 · {n}",
         "reviewOpenHint": "在图旁边打开这张架构图的结构点评",

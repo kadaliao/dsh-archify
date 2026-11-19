@@ -78,13 +78,17 @@ Each page is a standalone HTML file that works offline, so you can send it to so
 
 **New** draws a diagram without writing a prompt:
 
-1. **What to draw**: a codebase (type its folder, press **Choose…** for the folder dialog, or pick
-   one of your recent workspaces) or a description.
+1. **From a project** (optional): type a folder, press **Choose…** for the folder dialog, or pick
+   one of your recent workspaces. With a folder, the model reads that code, the diagram cites the
+   files it comes from and pins the commit (about one to two minutes). Without one, only your
+   description is drawn and no file is read (about half a minute), so it can be any system, a plan,
+   or something that is not software. A line under the text box says which of the two it will be.
 2. **Diagram type**: one of the ten, an explainer page, or **Best fit** to let the model choose.
    Each card shows a picture of that kind of diagram and says what it is for; the chosen one is
    shown large, and **Open the full example** opens Archify's own example of it as a live page.
-3. **Focus** (optional for a codebase, "only the backend services") or the description; a few
-   examples per type are one click away.
+3. **What to draw**: optional with a project (empty draws the whole picture; "only the backend
+   services" narrows it), the description itself without one. A few examples per type are one click
+   away.
 4. **Quality**: **Fine** runs Archify's full `showcase` checks, **Fast** its `standard` profile.
 
 On a wide panel, the right side keeps what the form will do in view: the picture of the type you
