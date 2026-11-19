@@ -1122,79 +1122,139 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /** Guide: what Archify can do, each as a prompt to copy or open in a conversation. */
+    /** One section of the Guide: a card of its own, so each use reads apart from the next. */
+    function GuideCard({ id, title, children }) {
+      return h(
+        'section',
+        { 'data-dsh-archify-guide-section': id, style: { border: `1px solid ${C.border1}`, borderRadius: 14, background: C.layer1, padding: '16px 18px 18px', display: 'flex', flexDirection: 'column', gap: 12 } },
+        h('h3', { style: { margin: 0, fontSize: 15, fontWeight: 660, color: C.primary, display: 'flex', alignItems: 'center', gap: 8 } }, h('span', { style: { width: 4, height: 15, borderRadius: 2, background: C.label, flex: 'none' } }), title),
+        children,
+      );
+    }
+
+    /**
+     * Guide: what Archify can do, each as a prompt to copy or open in a conversation. The table
+     * of contents follows the scroll; a click on it holds its choice until the person scrolls.
+     */
     function GuideView({ t, env, onUse, wide }) {
       const lang = langOf(t);
       const sections = GUIDE[lang] ?? GUIDE.en;
+      const entries = [['types', t('guide.types')], ...sections.map((x) => [x.key, t(`guide.${x.key}`)])];
       const [example, setExample] = useState('');
-      const jump = (key) => {
+      const [active, setActive] = useState('types');
+      const scroller = useRef(null);
+      const held = useRef('');
+      const keyOf = (node) => node.getAttribute('data-dsh-archify-guide-section');
+
+      /** The section whose top has passed the top of the view, or the last one at the bottom. */
+      const spy = () => {
+        const el = scroller.current;
+        if (!el || held.current) return;
+        let nodes = [];
         try {
-          document.querySelector(`[data-dsh-archify-guide-section="${key}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          nodes = [...el.querySelectorAll('[data-dsh-archify-guide-section]')];
+        } catch {
+          return;
+        }
+        if (nodes.length === 0) return;
+        const top = el.getBoundingClientRect().top;
+        let key = keyOf(nodes[0]);
+        for (const n of nodes) if (n.getBoundingClientRect().top - top <= 90) key = keyOf(n);
+        if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) key = keyOf(nodes[nodes.length - 1]);
+        if (key) setActive(key);
+      };
+      // The person scrolling again lets the table follow once more.
+      const release = () => {
+        held.current = '';
+      };
+      const jump = (key) => {
+        setActive(key);
+        held.current = key;
+        const el = scroller.current;
+        try {
+          const node = el?.querySelector(`[data-dsh-archify-guide-section="${key}"]`);
+          if (el && node) el.scrollTo({ top: node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 14, behavior: 'smooth' });
         } catch {
           // Scrolling is a convenience.
         }
       };
+
       const toc = wide
         ? h(
             'nav',
-            { 'data-dsh-archify-guide-toc': true, style: { width: 170, flex: 'none', position: 'sticky', top: 18, display: 'flex', flexDirection: 'column', gap: 2 } },
-            [['types', t('guide.types')], ...sections.map((x) => [x.key, t(`guide.${x.key}`)])].map(([key, label]) =>
-              h('button', { key, type: 'button', 'data-dsh-archify-toc': key, onClick: () => jump(key), style: { font: 'inherit', fontSize: 12.5, textAlign: 'left', color: C.muted, background: 'none', border: 'none', borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }, onMouseEnter: (e) => (e.currentTarget.style.background = C.hover), onMouseLeave: (e) => (e.currentTarget.style.background = 'none') }, label),
-            ),
-          )
-        : null;
-      return h(
-        'div',
-        { 'data-dsh-archify-guide': true, style: { display: 'flex', gap: 28, padding: '18px 22px 48px', alignItems: 'flex-start' } },
-        toc,
-        h(
-          'div',
-          { style: { flex: 1, minWidth: 0, maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 26 } },
-        h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7 } }, t('guideIntro')),
-        h(
-          'div',
-          { 'data-dsh-archify-guide-section': 'types' },
-          h(
-          Section,
-          { title: t('guide.types') },
-          h(
-            'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-            PICKABLE.filter((k) => k !== 'auto').map((k) => {
-              const ex = (EXAMPLES[lang] ?? EXAMPLES.en)[k] ?? {};
-              const sample = ex.desc?.[0] ?? ex.repo?.[0] ?? '';
+            { 'data-dsh-archify-guide-toc': true, style: { width: 176, flex: 'none', position: 'sticky', top: 18, display: 'flex', flexDirection: 'column', gap: 2 } },
+            entries.map(([key, label]) => {
+              const on = key === active;
               return h(
-                'div',
-                { key: k, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 4px', borderBottom: `1px solid ${C.border1}`, minWidth: 0 } },
-                h('span', { style: { width: 132, flex: 'none' } }, h(Thumb, { type: k, height: 76, onClick: () => setExample(k), title: t('seeExample') })),
-                h('span', { style: { width: 76, flex: 'none' } }, h(TypeChip, { t, type: k })),
-                h('span', { style: { fontSize: 12, color: C.muted, width: 190, flex: 'none' } }, t(`use.${k}`)),
-                h('span', { title: sample, style: { fontSize: 12, color: C.faint, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, sample),
-                h(Btn, { onClick: () => onUse?.({ type: k, mode: ex.desc ? 'describe' : 'repo', focus: sample }), 'data-dsh-archify-use': k }, t('useThis')),
+                'button',
+                {
+                  key,
+                  type: 'button',
+                  'data-dsh-archify-toc': key,
+                  'data-active': on ? 'yes' : 'no',
+                  'aria-current': on ? 'true' : undefined,
+                  onClick: () => jump(key),
+                  style: { font: 'inherit', fontSize: 12.5, textAlign: 'left', color: on ? C.primary : C.muted, fontWeight: on ? 650 : 450, background: on ? C.hover : 'none', border: 'none', borderLeft: `3px solid ${on ? C.label : 'transparent'}`, borderRadius: '0 7px 7px 0', padding: '6px 10px', cursor: 'pointer' },
+                },
+                label,
               );
             }),
-          ),
+          )
+        : null;
+
+      const types = h(
+        GuideCard,
+        { id: 'types', title: t('guide.types') },
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column' } },
+          PICKABLE.filter((k) => k !== 'auto').map((k, i) => {
+            const ex = (EXAMPLES[lang] ?? EXAMPLES.en)[k] ?? {};
+            const sample = ex.desc?.[0] ?? ex.repo?.[0] ?? '';
+            return h(
+              'div',
+              { key: k, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${C.border1}`, minWidth: 0 } },
+              h('span', { style: { width: 132, flex: 'none' } }, h(Thumb, { type: k, height: 76, onClick: () => setExample(k), title: t('seeExample') })),
+              h('span', { style: { width: 76, flex: 'none' } }, h(TypeChip, { t, type: k })),
+              h('span', { style: { fontSize: 12, color: C.muted, width: 180, flex: 'none' } }, t(`use.${k}`)),
+              h('span', { title: sample, style: { fontSize: 12, color: C.faint, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, sample),
+              h(Btn, { onClick: () => onUse?.({ type: k, mode: ex.desc ? 'describe' : 'repo', focus: sample }), 'data-dsh-archify-use': k }, t('useThis')),
+            );
+          }),
         ),
+      );
+      const note = (key) => h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${key}.note`));
+      const cards = sections.map((s) =>
+        h(
+          GuideCard,
+          { key: s.key, id: s.key, title: t(`guide.${s.key}`) },
+          s.pic
+            ? h(
+                'div',
+                { style: { display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' } },
+                h('div', { style: { width: 300, maxWidth: '100%' } }, h(Thumb, { type: s.pic, height: 170, fit: 'contain', onClick: () => setExample(s.pic), title: t('seeExample') })),
+                h('div', { style: { flex: 1, minWidth: 240 } }, note(s.key)),
+              )
+            : note(s.key),
+          s.prompts.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, s.prompts.map((p) => h(PromptLine, { key: p, t, text: p, env }))) : null,
         ),
-        sections.map((s) =>
+      );
+
+      return h(
+        'div',
+        { ref: scroller, 'data-dsh-archify-guide': true, onScroll: spy, onWheel: release, onTouchMove: release, onKeyDown: release, onMouseDown: release, style: { flex: 1, minHeight: 0, overflowY: 'auto' } },
+        h(
+          'div',
+          { style: { display: 'flex', gap: 28, padding: '18px 22px 0', alignItems: 'flex-start' } },
+          toc,
           h(
             'div',
-            { key: s.key, 'data-dsh-archify-guide-section': s.key },
-            h(
-            Section,
-            { title: t(`guide.${s.key}`) },
-            s.pic
-              ? h(
-                  'div',
-                  { style: { display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' } },
-                  h('div', { style: { width: 300, maxWidth: '100%' } }, h(Thumb, { type: s.pic, height: 170, fit: 'contain', onClick: () => setExample(s.pic), title: t('seeExample') })),
-                  h('div', { style: { flex: 1, minWidth: 240, fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${s.key}.note`)),
-                )
-              : h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7, whiteSpace: 'pre-line' } }, t(`guide.${s.key}.note`)),
-            s.prompts.length > 0 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, s.prompts.map((p) => h(PromptLine, { key: p, t, text: p, env }))) : null,
+            // Room below the last card, so every section can scroll up to the top of the view.
+            { style: { flex: 1, minWidth: 0, maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 18, paddingBottom: '55vh' } },
+            h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.7 } }, t('guideIntro')),
+            types,
+            cards,
           ),
-          ),
-        ),
         ),
         example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
       );
@@ -1497,7 +1557,7 @@ window.__ModuleLoader__.load({
       if (view === 'new') {
         body = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } }, h(NewView, { t, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob, seed, wide }));
       } else if (view === 'guide') {
-        body = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto' } }, h(GuideView, { t, env, onUse: use, wide }));
+        body = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } }, h(GuideView, { t, env, onUse: use, wide }));
       } else if (failed) body = h('div', { style: { padding: 24, color: C.faint } }, t('unavailable'));
       else if (items === null) body = h('div', { style: { padding: 24, color: C.faint } }, '…');
       else if (items.length === 0)

@@ -53,6 +53,8 @@ def shoot(page, html, theme):
     # Diagrams take the theme from the address; an explainer page follows the color scheme.
     page.emulate_media(color_scheme=theme, reduced_motion='reduce')
     page.goto(f'{html.as_uri()}?embed=1&theme={theme}')
+    # The before/after page picks its theme from its root element, not the address.
+    page.evaluate("t => { if (document.querySelector('html[data-theme]')) document.documentElement.setAttribute('data-theme', t); }", theme)
     page.wait_for_timeout(1800)
     drawing = page.locator('svg[aria-labelledby^="archify-diagram-title"]')
     if drawing.count() > 0:

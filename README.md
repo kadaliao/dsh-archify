@@ -120,7 +120,7 @@ the code: each one is a question to check. **Ask the model to review** sends the
 to the conversation that drew it, for a verdict, the main risks, concrete suggestions and strengths.
 The conversation card of an architecture diagram has a **Review** button that opens it here.
 
-**Guide**, with a table of contents on the left, lists the ten diagram types with a picture (click it for the live example), what each is
+**Guide**, with a table of contents on the left that follows the scroll and sections set apart as cards, lists the ten diagram types with a picture (click it for the live example), what each is
 for and an example request (**Use** fills the New form), then what else Archify does as prompts to copy or open in a new conversation: drawing from
 your code, converting Mermaid, changing a diagram, before/after comparison pages, one-page
 explainers, brand marks, reviews, and what the viewer inside a page can do.

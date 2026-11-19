@@ -494,3 +494,54 @@ test('a wide New keeps the preview beside the form, following the pointer, and f
   tree = render();
   assert.match(text(by(side(), 'data-dsh-archify-prompt-preview')[0]).join(''), /prompt for \/nope/);
 });
+
+test('the Guide\'s table of contents follows the scroll, and holds a clicked section until the person scrolls', async () => {
+  const { render } = panelHarness({ '/__dsh_archify/list': { items: [], total: 0, hasMore: false } });
+  let tree = render();
+  await flush();
+  tree = render();
+  by(tree, 'data-dsh-archify-panel')[0].props.ref.current = { clientWidth: 1200 };
+  tree = render();
+  tree = render();
+  by(tree, 'data-dsh-archify-tab', 'guide')[0].props.onClick(ev);
+  tree = render();
+  const keys = ['types', 'code', 'mermaid', 'edit', 'compare', 'explainer', 'brands', 'review', 'viewer'];
+  // A stand-in scroll box: section i starts at 600·i px; the view is 800 px tall, the content 5600.
+  const box = {
+    scrollTop: 0,
+    clientHeight: 800,
+    scrollHeight: 5600,
+    getBoundingClientRect: () => ({ top: 0 }),
+    querySelectorAll: () => nodes,
+    querySelector: (sel) => nodes.find((n) => sel.includes(`"${n.key}"`)),
+    scrollTo({ top }) {
+      this.scrollTop = top;
+    },
+  };
+  const nodes = keys.map((key, i) => ({ key, getAttribute: () => key, getBoundingClientRect: () => ({ top: 600 * i - box.scrollTop }) }));
+  const guide = () => by(tree, 'data-dsh-archify-guide')[0];
+  guide().props.ref.current = box;
+  const active = () => by(tree, 'data-active', 'yes').map((n) => n.props['data-dsh-archify-toc']);
+  assert.deepEqual(active(), ['types']);
+  // Scrolling down highlights the section at the top of the view.
+  box.scrollTop = 1250;
+  guide().props.onScroll();
+  tree = render();
+  assert.deepEqual(active(), ['mermaid']);
+  // A click jumps there and holds, even when the page ends below it.
+  by(tree, 'data-dsh-archify-toc', 'review')[0].props.onClick(ev);
+  tree = render();
+  assert.deepEqual(active(), ['review']);
+  assert.equal(box.scrollTop, 600 * 7 - 14);
+  box.scrollTop = 4800;
+  guide().props.onScroll();
+  tree = render();
+  assert.deepEqual(active(), ['review'], 'the smooth scroll does not move the highlight');
+  // Scrolling by hand lets it follow again: at the bottom, the last section.
+  guide().props.onWheel();
+  guide().props.onScroll();
+  tree = render();
+  assert.deepEqual(active(), ['viewer']);
+  // Every use is a card of its own.
+  assert.equal(findAll(tree, (n) => n.type === 'section' && n.props['data-dsh-archify-guide-section']).length, keys.length);
+});
