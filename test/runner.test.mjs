@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createRunner, folderOf, render, renderResult, scan, settingsOf } from '../index.js';
+import { createRunner, folderOf, render, renderResult, scan, settingsOf, submitReview } from '../index.js';
 import { createJobs } from '../lib/jobs.mjs';
 import { SKILL_ROOT } from '../lib/run.mjs';
 import { createStore } from '../lib/store.mjs';
@@ -93,31 +93,80 @@ test('Generate refuses a folder it cannot use, and says when the Harness cannot 
   assert.equal(r.job.state, 'failed');
 });
 
-test('a review goes to the conversation that drew the diagram, with the structural findings', async () => {
+test('a review goes to the conversation that drew the diagram and asks for one from its code', async () => {
   const { ctx, seen } = fakeHarness({ existing: ['s-old'] });
   const cache = mkdtempSync(join(tmpdir(), 'archify-cache-'));
   const store = createStore(cache);
-  const dir = mkdtempSync(join(tmpdir(), 'archify-item-'));
+  const dir = gitRepo();
+  writeFileSync(join(dir, 'server.js'), 'export function start() {}\n');
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init'], { cwd: dir });
   const spec = example('web-app.architecture.json');
-  spec.connections.push({ id: 'x1', from: spec.components[0].id, to: spec.components.find((c) => c.type === 'database').id });
-  const candidate = join(dir, 'candidate.json');
+  spec.components[0].sources = [{ path: 'server.js', line: 1 }];
+  const candidate = join(dir, '.archify', 'a', 'candidate.json');
+  mkdirSync(join(dir, '.archify', 'a'), { recursive: true });
   writeFileSync(candidate, JSON.stringify(spec));
-  const item = store.put({ id: 'i1', type: 'architecture', title: 'Web app', html: join(dir, 'web-app.html'), candidate, cwd: dir, sessionId: 's-old', updatedAt: 1 });
+  const item = store.put({ id: 'i1', type: 'architecture', title: 'Web app', html: join(dir, '.archify', 'a', 'web-app.html'), candidate, cwd: dir, sessionId: 's-old', updatedAt: 1 });
   const runner = createRunner(ctx, { jobs: createJobs(cache), store, workdir: join(cache, 'work') });
   const r = await runner.review({ id: item.id, lang: 'en' });
   assert.equal(r.ok, true, r.reason);
   assert.equal(seen.created.length, 0, 'no new conversation');
   assert.equal(seen.sent[0].sessionId, 's-old');
   const text = seen.sent[0].message.content[0].text;
-  assert.match(text, /Review the system architecture that the diagram "Web app" describes/);
-  assert.match(text, new RegExp(candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(text, /- \[(risk|warn|info|good)\]/);
-  // Its conversation gone, a review starts a new one in the same folder.
-  const again = await runner.review({ id: item.id, lang: 'en', newConversation: true });
-  assert.equal(again.ok, true);
-  assert.equal(seen.created.length, 1);
-  assert.equal(seen.workspaces.at(-1).path, dir);
+  assert.match(text, /Review, as an architect would, the system that the diagram "Web app" describes/);
+  // Git names the folder by its real path (/private/var on macOS).
+  assert.match(text, new RegExp(`The code is at (/private)?${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(commit [0-9a-f]{12}\\)`));
+  assert.match(text, /basis code/);
+  assert.doesNotMatch(text, /\[(risk|warn|info|good)\]/, 'no guessed findings');
+  // A diagram with no code behind it is reviewed as a design.
+  const plain = mkdtempSync(join(tmpdir(), 'archify-plain-'));
+  const c2 = join(plain, 'candidate.json');
+  writeFileSync(c2, JSON.stringify(example('web-app.architecture.json')));
+  const described = store.put({ id: 'i2', type: 'architecture', title: 'Shop', html: join(plain, 'shop.html'), candidate: c2, cwd: plain, sessionId: 's-old', updatedAt: 2 });
+  await runner.review({ id: described.id, lang: 'en' });
+  assert.match(seen.sent.at(-1).message.content[0].text, /drawn from a description; there is no code behind it/);
   assert.deepEqual(await runner.review({ id: 'nope' }), { ok: false, reason: 'missing' });
+});
+
+test('archify_review keeps a review only when every point\'s citations check out', async () => {
+  const dir = gitRepo();
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src', 'store.js'), Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init'], { cwd: dir });
+  const store = createStore(join(dir, '.cache'));
+  const candidate = join(dir, 'candidate.json');
+  writeFileSync(candidate, JSON.stringify(example('web-app.architecture.json')));
+  const item = store.put({ id: 'i1', type: 'architecture', title: 'Web app', html: join(dir, 'web-app.html'), candidate, cwd: dir, updatedAt: 1 });
+  const ctx = { get: (name) => (name === 'workingDirectory' ? { get: () => dir } : undefined) };
+  const exec = { agent: { session: { id: 's1' } } };
+  const base = { candidate, basis: 'code', software: 'a web app', verdict: 'fine' };
+  // A point with no citation, one past the end of a file, one outside the repository: refused, saying which.
+  await assert.rejects(
+    submitReview(ctx, store, { ...base, findings: [
+      { level: 'warn', title: 'Guess', detail: 'no evidence', suggestion: 'x', evidence: [] },
+      { level: 'warn', title: 'Past the end', detail: 'd', suggestion: 'x', evidence: [{ path: 'src/store.js', line: 28, end_line: 99 }] },
+      { level: 'info', title: 'Outside', detail: 'd', suggestion: 'x', evidence: [{ path: '../etc/passwd', line: 1 }] },
+    ] }, exec),
+    (error) => /The review was not saved/.test(error.message) && /\("Guess"\) cites no code/.test(error.message) && /has 30 lines/.test(error.message) && /stay inside it/.test(error.message),
+  );
+  assert.equal(store.get(item.id).review, undefined);
+  // Cited properly, it is kept with the cited lines and the commit.
+  const ok = await submitReview(ctx, store, { ...base, findings: [
+    { level: 'good', title: 'One store', detail: 'state lives in one place', evidence: [{ path: 'src/store.js', line: 3, end_line: 5, note: 'the store' }] },
+    { level: 'risk', title: 'Writes from many places', detail: 'd', suggestion: 'one writer', evidence: [{ path: './src/store.js', line: 10 }] },
+  ] }, exec);
+  assert.deepEqual([ok.ok, ok.findings, ok.cited], [true, 2, 2]);
+  const kept = store.get(item.id).review;
+  assert.match(kept.revision, /^[0-9a-f]{40}$/);
+  assert.deepEqual(kept.findings.map((f) => f.level), ['risk', 'good'], 'most serious first');
+  assert.deepEqual(kept.findings[1].evidence[0], { path: 'src/store.js', line: 3, end_line: 5, excerpt: 'line 3\nline 4\nline 5', more: false, note: 'the store' });
+  // A described design cites the diagram's own components.
+  await assert.rejects(submitReview(ctx, store, { ...base, basis: 'description', findings: [{ level: 'info', title: 'T', detail: 'd', suggestion: 's', evidence: [{ component: 'nope' }] }] }, exec), /"nope" is not a component of the diagram/);
+  const id0 = example('web-app.architecture.json').components[0].id;
+  const design = await submitReview(ctx, store, { ...base, basis: 'description', findings: [{ level: 'info', title: 'T', detail: 'd', suggestion: 's', evidence: [{ component: id0 }] }] }, exec);
+  assert.equal(design.basis, 'description');
+  await assert.rejects(submitReview(ctx, store, { ...base, candidate: '/nowhere/candidate.json', findings: [] }, exec), /no delivered page has the candidate/);
 });
 
 test('schema slips in a draft are fixed before checking, and the result says what changed', async () => {

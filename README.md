@@ -108,20 +108,19 @@ and **Copy the prompt** copies it for any conversation.
 to preview it; from there open it full screen, in the browser, in its folder, or go back to the
 conversation it was drawn in. **Remove** only takes it off the list; the file stays.
 
-For an architecture diagram, **Review** in the header (it counts the points worth a look) opens the
-review beside the drawing; on a wide screen it stays docked there. It first decides what kind of
-software the drawing describes, says so, and lets you switch: **an app on one machine** (desktop,
-mobile, a CLI, a plugin, a library), whose parts are modules of one process, is checked for what it
-leans on that it does not own (the operating system, other apps), the parts that need a system
-permission, state that many parts write, core modules many parts depend on, cycles and
-unconnected parts; **a system of networked services** is checked for a data store several services
-share, a client reaching a database directly, many services called with no gateway in front, a
-service everything depends on, synchronous cycles, call chains of five hops or more, external
-services on the call path, no authentication or network boundary and nothing that monitors it.
-Both note what is done well. These are heuristics over the drawing, not
-the code: each one is a question to check. **Ask the model to review** sends them with the diagram
-to the conversation that drew it, for a verdict, the main risks, concrete suggestions and strengths.
-The conversation card of an architecture diagram has a **Review** button that opens it here.
+For an architecture diagram, **Review** in the header opens the review beside the drawing (docked
+there on a wide screen). A review is written by the model from the code, never guessed from the
+drawing: **Review it from the code** asks the conversation that drew the diagram to read the
+repository, establish what kind of software it is and how it runs, and judge only what matters for
+that kind (no scaling out or message queues for an app that runs on one machine). Every point
+cites the files and line ranges it rests on, and the `archify_review` tool checks each citation
+(the file is in the repository, the lines exist) before it keeps the review; a point whose
+citations do not check out is refused, so the model backs it up or drops it. The review shows the
+verdict, the kind of software, the commit it was checked against, and each point with its
+suggestion and citations; a click on a citation shows those lines of code. A diagram drawn from a
+description, with no code behind it, gets a review of its design, every point naming the
+components it is about. Whether each argument holds is still yours to judge: the citations are
+there so you can. The conversation card of an architecture diagram has a **Review** button that opens it here.
 
 **Guide**, with a table of contents on the left that follows the scroll and sections set apart as cards, lists the ten diagram types with a picture (click it for the live example), what each is
 for and an example request (**Use** fills the New form), then what else Archify does as prompts to copy or open in a new conversation: drawing from
@@ -221,6 +220,7 @@ setting), and the examples the panel opens are rendered once into `~/.dsh/cache/
 | --- | --- |
 | `archify_render` | Renders, checks and delivers a page: Archify's `finalize`. Takes `type`, and either `spec` (the JSON, or `markdown` for an explainer) for a new page, or `candidate` (a path) to render an edited draft again. Optional `name`, `quality` (defaults to the draft's `meta.quality_profile`), `relayout`, `repoRoot` (defaults to the working directory's Git root when the draft cites source files) and `output`. |
 | `archify_scan` | A repository at a glance for a diagram of a codebase, with its code map (see above). Optional `path`; its Git root is scanned. |
+| `archify_review` | Keeps an architecture review of a delivered diagram: `candidate`, `basis` (`code` or `description`), `software`, `verdict` and `findings`, each citing files and line ranges (or components). Refuses a point whose citations do not check out. |
 | `archify_cli` | Runs any other Archify command (`guide`, `brands`, `compare`, `patch`, `validate`, `visual-check`, `doctor`, …) with the bundled runtime. `preview`, which starts a live server, is refused. |
 
 ## Settings

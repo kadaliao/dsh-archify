@@ -22,12 +22,12 @@ import { basename, dirname, isAbsolute, join, sep } from 'node:path';
 
 import { CLI, SKILL_ROOT, clip, outcomeOf, parseJsonOutput, runArchify } from './lib/run.mjs';
 import { WORKER, layoutReason, sidecarOf } from './lib/autolayout.mjs';
-import { citesEvidence, fixRepository, repositoryFacts } from './lib/repository.mjs';
+import { EVIDENCE_NODES, citesEvidence, fixRepository, repositoryFacts } from './lib/repository.mjs';
+import { MAX_FINDINGS, checkReview } from './lib/critique.mjs';
 import { EXAMPLES, examplePage, previewFile } from './lib/examples.mjs';
 import { createJobs } from './lib/jobs.mjs';
 import { NATIVE_TYPES, TYPES, planPaths, resolveFrom, titleOf, withOutput } from './lib/paths.mjs';
 import { PICKABLE, generationPrompt, reviewPrompt, typeName } from './lib/prompts.mjs';
-import { findingLines, reviewArchitecture } from './lib/review.mjs';
 import { describeChanges, sanitize } from './lib/sanitize.mjs';
 import { scanRepo } from './lib/scan.mjs';
 import { createStore, newId } from './lib/store.mjs';
@@ -71,6 +71,7 @@ export const inject = ['tools'];
 export const RENDER_TOOL = 'archify_render';
 export const CLI_TOOL = 'archify_cli';
 export const SCAN_TOOL = 'archify_scan';
+export const REVIEW_TOOL = 'archify_review';
 export const SKILL_NAME = 'archify';
 export const PROVIDER = 'dsh-archify';
 /** Packaged skills' standard precedence (`BUNDLED_SKILL_RANK` in @deepseek-ai/dsh-skill). */
@@ -624,6 +625,80 @@ export function buildScanTool(ctx) {
   });
 }
 
+// --- reviews: written by the model from the code, checked here --------------------------
+
+/** HEAD of the checkout at `root`, or ''. */
+function headOf(root) {
+  return new Promise((resolve) => {
+    if (!root) return resolve('');
+    execFile('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 5000, windowsHide: true }, (error, stdout) => resolve(error ? '' : String(stdout).trim()));
+  });
+}
+
+/**
+ * What a page's review rests on: the code of the checkout it was drawn from (when its
+ * diagram cites sources, or a panel run drew it from a folder), else its own design.
+ */
+export async function reviewBasis(item, { fromFolder = false } = {}) {
+  const spec = parseJson(readText(item?.candidate));
+  const root = item?.cwd ? await gitRoot(item.cwd) : '';
+  const code = Boolean(root) && (fromFolder || citesEvidence(item.type, spec));
+  return { basis: code ? 'code' : 'description', repo: code ? root : '', spec };
+}
+
+/** Run one `archify_review` call: check the review and keep it with its page. */
+export async function submitReview(ctx, store, args, exec) {
+  const a = args && typeof args === 'object' ? args : {};
+  const cwd = cwdOf(ctx, exec);
+  const candidate = typeof a.candidate === 'string' && a.candidate.trim() !== '' ? resolveFrom(cwd, a.candidate) : '';
+  const item = (typeof a.page === 'string' && store.get(a.page)) || (candidate ? store.find((it) => it.candidate === candidate) : undefined);
+  if (!item) throw new ToolInputError(`no delivered page has the candidate ${candidate || '(none given)'}; pass the candidate path of the diagram being reviewed`);
+  const spec = parseJson(readText(item.candidate));
+  const coll = EVIDENCE_NODES[item.type];
+  const componentIds = coll && Array.isArray(spec?.[coll]) ? spec[coll].map((n) => String(n?.id ?? '')).filter(Boolean) : [];
+  const repoRoot = a.basis === 'description' ? '' : await gitRoot(item.cwd || cwd);
+  const check = checkReview(a, { repoRoot, componentIds });
+  if (!check.ok) throw new ToolInputError(`The review was not saved. Fix these and call ${REVIEW_TOOL} again:\n- ${check.errors.slice(0, 20).join('\n- ')}`);
+  const revision = check.review.basis === 'code' ? await headOf(repoRoot) : '';
+  store.patch(item.id, { review: { ...check.review, repo: repoRoot ? basename(repoRoot) : '', revision, at: Date.now() } });
+  return { ok: true, id: item.id, title: item.title, basis: check.review.basis, findings: check.review.findings.length, cited: check.review.findings.reduce((n, f) => n + f.evidence.length, 0) };
+}
+
+export function buildReviewTool(ctx, store) {
+  return defineTool({
+    name: REVIEW_TOOL,
+    description:
+      'Submit an architecture review of a delivered Archify diagram, written after reading the code, so the person sees it beside the diagram in the Archify panel. Use it when asked to review a diagram\'s architecture. ' +
+      'Every finding rests on evidence: with basis "code", repository files with line ranges ({"path": "src/x.ts", "line": 12, "end_line": 40, "note": "…"}), which the tool checks exist and shows beside the point; with basis "description" (a diagram drawn from a description, no code), the diagram\'s component ids ({"component": "api"}). ' +
+      'A finding whose evidence does not check out is refused, with the reason; fix it or leave the point out, and call again.',
+    parameters: {
+      candidate: { type: 'string', required: true, description: 'Path of the reviewed diagram\'s candidate file (as given in the request).' },
+      basis: { type: 'string', required: true, enum: ['code', 'description'], description: 'code: the review was checked against the repository; description: the diagram has no code behind it.' },
+      software: { type: 'string', required: true, description: 'What kind of software this is and how it runs, as established from the code, in one line.' },
+      verdict: { type: 'string', required: true, description: 'One or two sentences on the architecture as a whole.' },
+      findings: {
+        type: 'array',
+        required: true,
+        items: { type: 'object', additionalProperties: true },
+        description: `Up to ${MAX_FINDINGS}, the ones that matter: {"level": "risk"|"warn"|"info"|"good", "title": "…", "detail": "what the code does and why it matters", "suggestion": "a change that can be made (required unless good)", "evidence": [ up to 4 citations ]}.`,
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true, properties: { ok: { type: 'boolean', required: true } } },
+      render: (_a, v) => [
+        {
+          type: 'text',
+          text: `Saved the review of "${v?.title}" (${v?.findings} points, ${v?.cited} citations${v?.basis === 'code' ? ' checked against the code' : ' to the diagram\'s components'}). The person sees it in the Archify panel beside the diagram. Reply with the verdict and the most important points in a few sentences; do not repeat the citations.`,
+        },
+      ],
+      presentationMeta: (_a, v) => ({ archifyReview: true, id: String(v?.id ?? ''), title: String(v?.title ?? ''), findings: Number(v?.findings) || 0, basis: String(v?.basis ?? '') }),
+    },
+    timeoutMs: 30_000,
+    isConcurrencySafe: () => true,
+    execute: (args, exec) => submitReview(ctx, store, args, exec),
+  });
+}
+
 // --- the panel's own runs: a new diagram, a review ------------------------------------
 
 /** What `service` in the Host gives, or undefined. */
@@ -732,10 +807,9 @@ export function createRunner(ctx, { jobs, store, workdir }) {
     async review(body) {
       const item = store.get(String(body.id ?? ''));
       if (!item) return { ok: false, reason: 'missing' };
-      const spec = parseJson(readText(item.candidate));
-      const checks = item.type === 'architecture' && spec ? reviewArchitecture(spec, { kind: body.kind }) : { findings: [] };
-      const repo = item.cwd && spec && citesSources(item.type, JSON.stringify(spec)) ? await gitRoot(item.cwd) : '';
-      const text = reviewPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', title: item.title, candidate: item.candidate, findings: findingLines(checks), repo, kind: checks.kind ?? '' });
+      const fromFolder = jobs.list(40).some((j) => j.kind === 'diagram' && j.dir && Array.isArray(j.pages) && j.pages.includes(item.id));
+      const { basis, repo } = await reviewBasis(item, { fromFolder });
+      const text = reviewPrompt({ lang: body.lang === 'zh' ? 'zh' : 'en', title: item.title, candidate: item.candidate, repo, revision: await headOf(repo), basis });
       const job = jobs.create({ kind: 'review', type: item.type, dir: item.cwd, title: `Archify · ${body.lang === 'zh' ? '点评' : 'review'} · ${item.title}`, pageId: item.id });
       try {
         const sessionId = await send({ text, title: job.title, dir: item.cwd, sessionId: body.newConversation === true ? '' : item.sessionId });
@@ -768,6 +842,7 @@ export function apply(ctx, config) {
     ctx.effect(() => ctx.tools.register(buildRenderTool(ctx, store, settings, hooks)));
     ctx.effect(() => ctx.tools.register(buildCliTool(ctx, settings)));
     ctx.effect(() => ctx.tools.register(buildScanTool(ctx)));
+    ctx.effect(() => ctx.tools.register(buildReviewTool(ctx, store)));
   }
 
   // The panel follows the conversations it started: their tool calls, and their end.
@@ -845,13 +920,14 @@ export function apply(ctx, config) {
         kind: 'exact',
         path: REVIEW_ROUTE,
         handler: (req, res) =>
-          serveJson(res, () => {
+          serveJson(res, async () => {
             const url = new URL(req.url ?? '/', 'http://localhost');
             const item = store.get(url.searchParams.get('id') ?? '');
-            if (!item) return { supported: false, reason: 'missing', findings: [] };
-            const spec = parseJson(readText(item.candidate));
-            if (!spec) return { supported: false, reason: 'no-candidate', findings: [] };
-            return reviewArchitecture(spec, { kind: url.searchParams.get('kind') ?? '' });
+            if (!item) return { supported: false, reason: 'missing' };
+            if (!existsSync(item.candidate)) return { supported: false, reason: 'no-candidate' };
+            const fromFolder = jobs.list(40).some((j) => j.kind === 'diagram' && j.dir && Array.isArray(j.pages) && j.pages.includes(item.id));
+            const { basis, repo } = await reviewBasis(item, { fromFolder });
+            return { supported: true, basis, repo: repo ? basename(repo) : '', review: item.review ?? null };
           }),
       }),
     );
@@ -952,6 +1028,7 @@ function publicItem(item) {
     browserSkipped: item.browserSkipped === true,
     bytes: item.bytes,
     version: item.version,
+    reviewedAt: item.review?.at ?? 0,
     aspect: item.aspect ?? 0,
     missing: item.missing === true,
     url: `${FILE_ROUTE}/${item.id}`,

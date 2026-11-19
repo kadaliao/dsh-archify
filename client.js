@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
     const PREVIEW_ROUTE = '/__dsh_archify/preview/';
     const EXAMPLE_ROUTE = '/__dsh_archify/example/';
     const SCAN_TOOL = 'archify_scan';
+    const REVIEW_TOOL = 'archify_review';
     const PAGE = 60;
     const POLL_MS = 5000;
     const SANDBOX = 'allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals';
@@ -564,6 +565,27 @@ window.__ModuleLoader__.load({
         settled && open
           ? h('pre', { style: { margin: 0, maxHeight: 320, overflow: 'auto', fontSize: 11.5, lineHeight: 1.5, padding: '8px 10px', borderRadius: 8, background: C.layer2, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' } }, text)
           : null,
+      );
+    }
+
+    function ReviewToolView(props) {
+      const t = typeof props.t === 'function' ? props.t : fallbackT;
+      const { phase, block } = props;
+      const settled = phase === 'result';
+      const meta = settled && block?.meta && typeof block.meta === 'object' ? block.meta : null;
+      const failed = settled && block?.isError;
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, fontSize: SMALL } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, color: C.muted, minWidth: 0 } },
+          h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, color: meta?.archifyReview ? C.label : C.faint, fontWeight: 600, flex: 'none' } }, h(ReviewIcon, { size: 14 }), t('reviewTitle')),
+          h('span', { style: { color: failed ? C.error : C.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, !settled ? t('reviewChecking') : failed ? t('reviewRefused') : t('reviewSaved', { n: meta?.findings ?? 0 })),
+          h('span', { style: { flex: 1 } }),
+          meta?.id && typeof panelOpener.fn === 'function' ? h(ToolButton, { onClick: () => { requestPage(meta.id, { review: true }); panelOpener.fn(); }, title: t('reviewInPanel'), icon: h(ReviewIcon) }) : null,
+        ),
+        failed ? h('div', { style: { fontSize: 12, color: C.muted, whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' } }, resultText(block)) : null,
       );
     }
 
@@ -1262,24 +1284,38 @@ window.__ModuleLoader__.load({
 
     const LEVEL_COLOR = { risk: C.error, warn: 'var(--dsw-alias-state-warning-primary, #d08a1c)', info: C.faint, good: C.ok };
 
-    /** One finding of the structural review, in the reader's language. */
-    function findingText(t, f) {
-      const p = { ...(f.params ?? {}) };
-      for (const k of Object.keys(p)) if (Array.isArray(p[k])) p[k] = k === 'path' ? p[k].join(' → ') : listJoin(t, p[k]);
-      const key = `rv.${f.code}`;
-      const said = t(key, p);
-      return said === key ? f.code : said;
+    /** One citation: the file and lines a point rests on, opening to the code itself. */
+    function Citation({ t, e }) {
+      const [open, setOpen] = useState(false);
+      if (e.component) {
+        return h('span', { 'data-dsh-archify-cite': e.component, style: { fontSize: 11.5, color: C.muted } }, h('code', { style: { fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2 } }, e.component), e.note ? ` ${e.note}` : '');
+      }
+      const where = `${e.path}:${e.line}${e.end_line && e.end_line !== e.line ? `–${e.end_line}` : ''}`;
+      return h(
+        'div',
+        { 'data-dsh-archify-cite': where, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+        h(
+          'button',
+          { type: 'button', onClick: () => setOpen((v) => !v), title: t('citeHint'), style: { font: 'inherit', alignSelf: 'flex-start', display: 'inline-flex', gap: 6, alignItems: 'baseline', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: C.muted, fontSize: 11.5 } },
+          h('code', { style: { fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2, color: C.label, wordBreak: 'break-all' } }, `${open ? '▾' : '▸'} ${where}`),
+          e.note ? h('span', null, e.note) : null,
+        ),
+        open ? h('pre', { style: { margin: 0, padding: '8px 10px', borderRadius: 8, background: C.layer2, color: C.primary, fontSize: 11, lineHeight: 1.55, overflowX: 'auto', whiteSpace: 'pre', userSelect: 'text' } }, `${e.excerpt}${e.more ? '\n…' : ''}`) : null,
+      );
     }
 
-    /** Review: the plugin's structural checks of a drawn architecture, and the model's deeper review. */
-    function ReviewBox({ t, item, env, jobs, onJob, side, data, onClose, onKind }) {
+    /**
+     * Review: the architecture review the model wrote from the code, every point checked
+     * against its citations, or, before there is one, what one will rest on.
+     */
+    function ReviewBox({ t, item, env, jobs, onJob, side, data, onClose }) {
       const [asking, setAsking] = useState(false);
       const [error, setError] = useState('');
       const job = (jobs ?? []).find((j) => j.kind === 'review' && j.pageId === item.id);
       const ask = () => {
         setAsking(true);
         setError('');
-        void postJson(ASK_ROUTE, { id: item.id, lang: langOf(t), ...(data?.kind ? { kind: data.kind } : {}) })
+        void postJson(ASK_ROUTE, { id: item.id, lang: langOf(t) })
           .then((r) => {
             if (r?.job) onJob?.(r.job);
             if (!r?.ok) setError(r?.reason || t('actionFailed'));
@@ -1287,62 +1323,61 @@ window.__ModuleLoader__.load({
           .catch(() => setError(t('actionFailed')))
           .finally(() => setAsking(false));
       };
-      const findings = Array.isArray(data?.findings) ? data.findings : [];
-      const s = data?.summary;
+      const review = data?.review ?? null;
+      const running = job && live(job);
+      const basisLine = (basis, repo, revision) => (basis === 'code' ? t('reviewBasisCode', { repo: repo || '', rev: revision ? revision.slice(0, 7) : '' }) : t('reviewBasisDesign'));
+      const action = running
+        ? h('span', { style: { fontSize: 12, color: C.faint } }, `${t(`act.${job.activity || 'thinking'}`)} · ${elapsed(job)}`)
+        : h(Btn, { kind: review ? 'plain' : 'primary', onClick: ask, disabled: asking || env?.canRun?.() === false, 'data-dsh-archify-ask': item.id, title: t('askReviewHint') }, h(ChatIcon, { size: 14 }), review ? t('askAgain') : t('askReview'));
+      let body;
+      if (data === null) body = h('div', { style: { fontSize: 12, color: C.faint } }, '…');
+      else if (!data.supported) body = h('div', { style: { fontSize: 12, color: C.faint } }, t('reviewUnavailable'));
+      else if (!review)
+        body = h(
+          'div',
+          { 'data-dsh-archify-review-empty': data.basis, style: { display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5, color: C.muted, lineHeight: 1.65 } },
+          h('span', null, data.basis === 'code' ? t('reviewHowCode', { repo: data.repo }) : t('reviewHowDesign')),
+        );
+      else
+        body = h(
+          'div',
+          { 'data-dsh-archify-review-done': review.basis, style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+          h('div', { style: { fontSize: 13, color: C.primary, lineHeight: 1.65, fontWeight: 560 } }, review.verdict),
+          h('div', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, [review.software, basisLine(review.basis, review.repo, review.revision), review.at ? fmtWhen(t, review.at) : ''].filter(Boolean).join(' · ')),
+          h(
+            'ol',
+            { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 } },
+            review.findings.map((f, i) =>
+              h(
+                'li',
+                { key: i, 'data-dsh-archify-finding': f.level, style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 10, background: side === 'sheet' ? C.layer1 : C.base, border: `1px solid ${C.border1}` } },
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
+                  h('span', { style: { flex: 'none', fontSize: 11, fontWeight: 700, color: LEVEL_COLOR[f.level] ?? C.faint } }, t(`level.${f.level}`)),
+                  h('span', { style: { fontSize: 13, fontWeight: 620, color: C.primary, lineHeight: 1.5 } }, f.title),
+                ),
+                h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.65, userSelect: 'text', whiteSpace: 'pre-line' } }, f.detail),
+                f.suggestion ? h('div', { style: { fontSize: 12.5, color: C.primary, lineHeight: 1.65, userSelect: 'text', whiteSpace: 'pre-line' } }, h('span', { style: { fontWeight: 620 } }, `${t('suggestion')}　`), f.suggestion) : null,
+                f.evidence.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } }, f.evidence.map((e, j) => h(Citation, { key: j, t, e }))) : null,
+              ),
+            ),
+          ),
+        );
       return h(
         'div',
-        { 'data-dsh-archify-review': item.id, style: side === 'sheet' ? { height: '100%', overflowY: 'auto', boxSizing: 'border-box', background: C.base, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 } : { border: `1px solid ${C.border1}`, borderRadius: 12, background: C.layer1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 } },
+        { 'data-dsh-archify-review': item.id, style: side === 'sheet' ? { height: '100%', overflowY: 'auto', boxSizing: 'border-box', background: C.base, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 } : { border: `1px solid ${C.border1}`, borderRadius: 12, background: C.layer1, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 } },
         h(
           'div',
-          { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
-          h('span', { style: { fontSize: SMALL, fontWeight: 640 } }, t('reviewTitle')),
+          { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+          h('span', { style: { fontSize: SMALL, fontWeight: 650 } }, t('reviewTitle')),
           h('span', { style: { flex: 1 } }),
           onClose ? h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }), 'data-dsh-archify-review-close': true }) : null,
         ),
-        s ? h('span', { style: { fontSize: 11.5, color: C.faint } }, t('reviewSummary', { components: s.components, connections: s.connections, async: s.async, boundaries: s.boundaries })) : null,
-        // Which kind of software the checks assumed, and the other one a click away.
-        data?.kind
-          ? h(
-              'div',
-              { 'data-dsh-archify-review-kind': data.kind, style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, color: C.muted, padding: '6px 9px', borderRadius: 8, background: C.layer2 } },
-              h('span', null, t('reviewAs', { kind: t(`kind.${data.kind}`) })),
-              onKind
-                ? h(
-                    'button',
-                    { type: 'button', 'data-dsh-archify-review-switch': data.kind === 'app' ? 'service' : 'app', onClick: () => onKind(data.kind === 'app' ? 'service' : 'app'), style: { font: 'inherit', fontSize: 12, color: C.label, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textDecoration: 'underline' } },
-                    t('reviewSwitch', { kind: t(`kind.${data.kind === 'app' ? 'service' : 'app'}`) }),
-                  )
-                : null,
-            )
-          : null,
-        h(
-          'div',
-          { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-          job && live(job)
-            ? h('span', { style: { fontSize: 12, color: C.faint } }, `${t(`act.${job.activity || 'thinking'}`)} · ${elapsed(job)}`)
-            : h(Btn, { onClick: ask, disabled: asking || env?.canRun?.() === false, 'data-dsh-archify-ask': item.id, title: t('askReviewHint') }, h(ChatIcon, { size: 14 }), job ? t('askAgain') : t('askReview')),
-          job?.sessionId && env?.canOpen?.() ? h(Btn, { onClick: () => env.openSession(job.sessionId) }, t(live(job) ? 'watchReview' : 'readReview')) : null,
-        ),
-        data === null
-          ? h('div', { style: { fontSize: 12, color: C.faint } }, '…')
-          : !data.supported
-            ? h('div', { style: { fontSize: 12, color: C.faint } }, t('reviewUnavailable'))
-            : findings.length === 0
-              ? h('div', { style: { fontSize: 12.5, color: C.muted } }, t('reviewClean'))
-              : h(
-                  'ul',
-                  { style: { margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 7 } },
-                  findings.map((f, i) =>
-                    h(
-                      'li',
-                      { key: `${f.code}:${i}`, 'data-dsh-archify-finding': f.code, style: { display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5, lineHeight: 1.6, color: C.primary } },
-                      h('span', { style: { flex: 'none', fontSize: 11, fontWeight: 640, color: LEVEL_COLOR[f.level] ?? C.faint, minWidth: 44 } }, t(`level.${f.level}`)),
-                      h('span', { style: { userSelect: 'text' } }, findingText(t, f)),
-                    ),
-                  ),
-                ),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } }, action, job?.sessionId && env?.canOpen?.() ? h(Btn, { onClick: () => env.openSession(job.sessionId) }, t(running ? 'watchReview' : 'readReview')) : null),
         error ? h('div', { style: { fontSize: 12, color: C.error } }, error) : null,
-        h('div', { style: { fontSize: 11.5, color: C.faint } }, t('reviewNote')),
+        body,
+        h('div', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, t('reviewNote')),
       );
     }
 
@@ -1367,7 +1402,6 @@ window.__ModuleLoader__.load({
       const [jobs, setJobs] = useState([]);
       const [seed, setSeed] = useState(null);
       const [reviewOpen, setReviewOpen] = useState(false);
-      const [reviewKinds, setReviewKinds] = useState({});
       const [, setTick] = useState(0);
       const alive = useRef(true);
       const itemsRef = useRef(items);
@@ -1408,7 +1442,7 @@ window.__ModuleLoader__.load({
             const fresh = new Map(body.items.map((i) => [i.id, i]));
             const rest = known.slice(PAGE).filter((i) => !fresh.has(i.id));
             const next = [...body.items, ...rest];
-            const same = next.length === known.length && next.every((i, at) => i.id === known[at].id && i.version === known[at].version && i.missing === known[at].missing);
+            const same = next.length === known.length && next.every((i, at) => i.id === known[at].id && i.version === known[at].version && i.missing === known[at].missing && i.reviewedAt === known[at].reviewedAt);
             if (!same) setItems(next);
           })
           .catch(() => alive.current && itemsRef.current === null && setFailed(true));
@@ -1502,13 +1536,13 @@ window.__ModuleLoader__.load({
           : undefined;
 
       const [review, setReview] = useState(null);
-      const reviewKey = current && current.type === 'architecture' && !current.missing ? `${current.id}:${current.version}:${reviewKinds[current.id] ?? ''}` : '';
+      const reviewKey = current && current.type === 'architecture' && !current.missing ? `${current.id}:${current.version}:${current.reviewedAt ?? 0}` : '';
       useEffect(() => {
         let alive = true;
         setReview(null);
         if (!reviewKey) return undefined;
-        const [id, , kind] = reviewKey.split(':');
-        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(id)}${kind ? `&kind=${kind}` : ''}`)
+        const id = reviewKey.split(':')[0];
+        void getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(id)}`)
           .then((r) => alive && setReview({ key: reviewKey, ...(r ?? { supported: false, findings: [] }) }))
           .catch(() => alive && setReview({ key: reviewKey, supported: false, findings: [] }));
         return () => {
@@ -1516,7 +1550,7 @@ window.__ModuleLoader__.load({
         };
       }, [reviewKey]);
       const reviewData = review && review.key === reviewKey ? review : null;
-      const concerns = (reviewData?.findings ?? []).filter((f) => f.level !== 'good').length;
+      const concerns = (reviewData?.review?.findings ?? []).filter((f) => f.level !== 'good').length;
 
       const remove = (item) => {
         setItems((list) => (list ?? []).filter((i) => i.id !== item.id));
@@ -1645,7 +1679,7 @@ window.__ModuleLoader__.load({
                 h('span', { title: current.path, style: { fontSize: SMALL, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 } }, current.title),
                 openSession ? h(ToolButton, { onClick: openSession, title: t('openSession'), icon: h(ChatIcon) }) : null,
                 reviewKey && !(paneW >= 1100)
-                  ? h(Btn, { kind: reviewOpen ? 'primary' : 'plain', onClick: () => setReviewOpen((v) => !v), 'data-dsh-archify-to-review': current.id, title: t('reviewOpenHint') }, h(ReviewIcon, { size: 14 }), reviewData?.supported ? t('reviewCount', { n: concerns }) : t('reviewTitle'))
+                  ? h(Btn, { kind: reviewOpen ? 'primary' : 'plain', onClick: () => setReviewOpen((v) => !v), 'data-dsh-archify-to-review': current.id, title: t('reviewOpenHint') }, h(ReviewIcon, { size: 14 }), reviewData?.review ? t('reviewCount', { n: concerns }) : t('reviewTitle'))
                   : null,
                 current.missing ? null : h(PageActions, { t, item: current, onExpand: () => setFull(true), compact: paneW < 620 }),
                 h(ToolButton, { onClick: () => remove(current), title: t('remove'), icon: h(TrashIcon) }),
@@ -1665,7 +1699,7 @@ window.__ModuleLoader__.load({
                       : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? 356 : 0), title: current.title })),
                     h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
                   );
-                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, h('div', { style: { width: 340, flex: 'none', position: 'sticky', top: 0 } }, h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'docked', data: reviewData, onKind: (k) => setReviewKinds((m) => ({ ...m, [current.id]: k })) })));
+                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, h('div', { style: { width: 340, flex: 'none', position: 'sticky', top: 0 } }, h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'docked', data: reviewData })));
                   return drawing;
                 })(),
               ),
@@ -1674,7 +1708,7 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { 'data-dsh-archify-review-sheet': current.id, style: { position: 'absolute', top: 45, right: 0, bottom: 0, width: Math.min(400, Math.max(300, Math.round(paneW * 0.48))), borderLeft: `1px solid ${C.border1}`, boxShadow: '-12px 0 28px rgba(0,0,0,.10)', zIndex: 5 } },
-                    h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'sheet', data: reviewData, onClose: () => setReviewOpen(false), onKind: (k) => setReviewKinds((m) => ({ ...m, [current.id]: k })) }),
+                    h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, side: 'sheet', data: reviewData, onClose: () => setReviewOpen(false) }),
                   )
                 : null,
             )
@@ -1823,49 +1857,32 @@ window.__ModuleLoader__.load({
         "guide.brands": "Brand marks",
         "guide.brands.note": "Real products (AWS, Stripe, Redis, GitHub…) can carry their marks next to the type icon; name them in the prompt.",
         "guide.review": "Review an architecture",
-        "guide.review.note": "Pick an architecture in the Gallery: under it, the plugin's structural review (shared databases, hotspots, cycles, long call chains, missing gateways) and a button for the model's deeper review.",
+        "guide.review.note": "Pick an architecture in the Gallery and open Review: the model reads the code and reviews the architecture as it is built, judging it by what matters for that kind of software. Every point cites the files and lines it rests on, the plugin checks them before keeping the review, and a click on a citation shows the code.",
         "guide.viewer": "Reading a page",
         "guide.viewer.note": "Inside a page: ? lists the shortcuts; search finds a part; click a part for what goes in and out of it; pick two parts for the route between them; the menu exports PNG, JPEG, WebP, a two-theme SVG or a WebM recording; switch light and dark, and live or still motion.",
         "reviewTitle": "Review",
-        "reviewSummary": "{components} parts · {connections} connections ({async} async) · {boundaries} boundaries",
-        "askReview": "Ask the model to review",
+        "askReview": "Review it from the code",
         "askAgain": "Review again",
-        "askReviewHint": "Sends these findings and the diagram to the model, in the conversation that drew it, for risks and suggestions",
+        "askReviewHint": "The model reads the code and writes the review, in the conversation that drew the diagram; every point cites its evidence",
         "watchReview": "Watch",
         "readReview": "Read the review",
-        "reviewUnavailable": "No review for this page (its candidate is gone).",
-        "reviewClean": "No obvious structural issue in the drawing.",
-        "reviewNote": "Heuristics over the drawing, not the code: each point is something to check.",
+        "reviewUnavailable": "This page cannot be reviewed: its diagram file is gone.",
+        "reviewNote": "Points are kept only when their citations check out: the files exist and the lines hold code. Whether the reasoning holds is for you to judge; open a citation to see the code.",
         "level.risk": "Risk",
         "level.warn": "Check",
         "level.info": "Note",
         "level.good": "Good",
-        "rv.shared-store": "{n} services use the data store \"{store}\" directly ({users}). A shared database ties them together and makes schema changes a joint effort; consider data owned per service, or one service in front of it.",
-        "rv.client-to-store": "The client \"{client}\" reaches the data store \"{store}\" directly, past the service layer's checks and permissions. It usually goes through a backend.",
-        "rv.client-fanout": "The client \"{client}\" calls {n} internal services directly ({targets}) with no gateway in front. A gateway or BFF would centralize auth, rate limits and aggregation.",
-        "rv.hotspot": "{n} parts depend on \"{name}\": a likely single point of failure and bottleneck. Check that it scales out and degrades gracefully.",
-        "rv.wide-dependency": "\"{name}\" depends on {n} parts: it may do too much, and any of them failing affects it.",
-        "rv.cycle": "Synchronous calls form a cycle: {names}. Circular dependencies are hard to deploy and debug separately; consider an event or a merged boundary.",
-        "rv.deep-chain": "A synchronous call chain of {hops} hops: {path}. Latency and failures add up along it; consider caching, async work or fewer hops.",
-        "rv.all-sync": "All calls between the {n} backend services are synchronous, with no queue. Slow or retryable work could go async.",
-        "rv.external-deps": "{n} external dependencies on the call path ({names}). Check timeouts, retries and circuit breakers, and what happens when one is down.",
-        "rv.no-security": "No authentication part or security boundary is drawn. If the system has one, draw it; if not, check where access control lives.",
-        "rv.no-observability": "Nothing on the drawing monitors, logs or traces the system. For a system this size, observability is worth showing or adding.",
-        "rv.isolated": "{n} parts have no connections ({names}): either a relationship is missing or they can go.",
-        "rv.stores-owned": "Each of the {n} data stores is used by one service: clear data ownership.",
-        "rv.gateway-front": "Clients enter through {gateway}: one front door.",
-        "rv.async-decoupling": "Asynchronous work goes through {bus}, so producers and consumers are decoupled.",
         "reviewInPanel": "Review this architecture (Archify panel)",
         "scanned": "scanned {root}",
-        "kind.app": "an app on one machine (desktop, mobile, CLI, plugin)",
-        "kind.service": "a system of networked services",
-        "reviewAs": "Checked as {kind}.",
-        "reviewSwitch": "Check it as {kind} instead",
-        "rv.app-shared-state": "{n} parts read or write \"{store}\" ({users}). Shared state is fine in an app, but with many writers it gets hard to tell where a value came from and who changed it; check that writes go through one place.",
-        "rv.app-hub": "{n} parts depend on \"{name}\": a core module. A change to it reaches far, so it is the first place tests pay off.",
-        "rv.app-outside": "{n} features depend on \"{name}\", which this app does not own ({users}). A system update or a new version of it can change how it behaves; these features should tell the person when it stops working.",
-        "rv.app-permissions": "{n} parts need a system permission ({names}). When it is not granted or is taken back, they should degrade and tell the person where to turn it on.",
-        "rv.app-ui-state": "The screens take their data through \"{store}\", so what is shown and what does the work are kept apart.",
+        "reviewHowCode": "No review yet. The model reads the code of {repo} and reviews the architecture as it is built: what kind of software it is, then only what matters for that kind. Every point cites the files and lines it rests on, and the plugin checks those citations before it keeps the review. About one to three minutes.",
+        "reviewHowDesign": "No review yet. This diagram was drawn from a description, with no code behind it, so the review is of the design it shows: every point names the components it is about, and nothing beyond the diagram is assumed.",
+        "reviewBasisCode": "checked against the code of {repo} at {rev}",
+        "reviewBasisDesign": "a review of the drawn design (no code)",
+        "suggestion": "Suggestion",
+        "citeHint": "Show the code this rests on",
+        "reviewChecking": "checking the citations…",
+        "reviewRefused": "not saved: a citation did not check out (the model fixes it)",
+        "reviewSaved": "saved: {n} points, each with its evidence",
         "newFrom": "From a project",
         "newFromHint": "optional: without a folder, only your description is drawn",
         "newWhatToDraw": "What to draw",
@@ -1877,7 +1894,7 @@ window.__ModuleLoader__.load({
         "needSomething": "Pick a project folder, or write what to draw.",
         "folderMissing": "There is no folder at this path.",
         "reviewCount": "Review · {n}",
-        "reviewOpenHint": "The structural review of this architecture, beside the drawing",
+        "reviewOpenHint": "The architecture review, beside the drawing",
         "typeHint": "point at a card to see it on the right",
         "promptTitle": "The prompt that will be sent",
         "hidePrompt": "Hide the prompt",
@@ -2014,49 +2031,32 @@ window.__ModuleLoader__.load({
         "guide.brands": "品牌图标",
         "guide.brands.note": "真实产品（AWS、Stripe、Redis、GitHub……）可以在类型图标旁带上品牌标志，在提示词里点名即可。",
         "guide.review": "点评架构",
-        "guide.review.note": "在「图库」里选一张架构图：下面有插件的结构检查（共享数据库、热点、循环依赖、过长调用链、缺少网关等），还有一个按钮让模型深入点评。",
+        "guide.review.note": "在「图库」里选一张架构图，打开「点评」：模型读代码，按这类软件真正重要的方面评审实际的架构。每条结论都附上依据的文件和行号，插件核对过才保存，点开依据就能看到代码。",
         "guide.viewer": "看图",
         "guide.viewer.note": "在页面里：按 ? 看快捷键；搜索找组件；点一个组件看它的上下游；选两个组件看它们之间的路径；菜单可导出 PNG、JPEG、WebP、明暗双主题 SVG 或 WebM 动画；可切换明暗主题和动静效果。",
         "reviewTitle": "点评",
-        "reviewSummary": "{components} 个组件 · {connections} 条连线（{async} 条异步）· {boundaries} 个边界",
-        "askReview": "让模型深入点评",
+        "askReview": "读代码点评",
         "askAgain": "再点评一次",
-        "askReviewHint": "把这些发现和图发给模型（在画这张图的会话里），请它给出风险和改进建议",
+        "askReviewHint": "让模型在画这张图的会话里读代码写点评，每条结论都附依据",
         "watchReview": "查看进度",
         "readReview": "看点评",
-        "reviewUnavailable": "这张图没法点评（候选文件已经不在了）。",
-        "reviewClean": "图上没看出明显的结构问题。",
-        "reviewNote": "基于图的启发式检查，不看代码：每一条都是值得核实的问题，不是结论。",
+        "reviewUnavailable": "这张图没法点评：图的数据文件已经不在了。",
+        "reviewNote": "只有依据核对通过（文件存在、行号对得上）的结论才会保存。推理是否成立由你判断：点开依据就能看到对应的代码。",
         "level.risk": "风险",
         "level.warn": "注意",
         "level.info": "提示",
         "level.good": "做得好",
-        "rv.shared-store": "{n} 个服务直接用同一个数据存储「{store}」（{users}）。共享库会把服务耦合在一起，改表要多方协调；考虑按服务拆分数据，或只让一个服务直接访问。",
-        "rv.client-to-store": "客户端「{client}」直接连数据存储「{store}」，绕过了服务层的校验和权限。通常应经由后端服务访问。",
-        "rv.client-fanout": "客户端「{client}」直接调用 {n} 个内部服务（{targets}），前面没有网关。加一个 API 网关或 BFF，可以统一鉴权、限流和接口聚合。",
-        "rv.hotspot": "{n} 个部分依赖「{name}」，它可能是单点和瓶颈。确认它能水平扩展、有降级方案。",
-        "rv.wide-dependency": "「{name}」依赖 {n} 个部分，职责可能过多，其中任何一个出问题都会影响它。",
-        "rv.cycle": "同步调用形成了环：{names}。循环依赖难以分开部署和排查，考虑用事件解耦或合并边界。",
-        "rv.deep-chain": "同步调用链有 {hops} 跳：{path}。延迟和故障会逐层累积，考虑缓存、异步或减少跳数。",
-        "rv.all-sync": "{n} 个后端服务之间全是同步调用，没有消息队列。耗时或可重试的工作可以改成异步。",
-        "rv.external-deps": "调用链上有 {n} 个外部依赖（{names}）。确认有超时、重试和熔断，外部故障时能降级。",
-        "rv.no-security": "图上看不到鉴权组件或安全边界。系统里有的话可以画出来；没有的话，值得确认访问控制放在哪里。",
-        "rv.no-observability": "图上没有监控、日志或链路追踪。系统到这个规模，可观测性值得画出来或者补上。",
-        "rv.isolated": "{n} 个部分没有任何连线（{names}）：要么漏了关系，要么可以从图里拿掉。",
-        "rv.stores-owned": "{n} 个数据存储各自只被一个服务使用，数据归属清楚。",
-        "rv.gateway-front": "客户端统一经由 {gateway} 进入，入口收敛。",
-        "rv.async-decoupling": "异步工作经由 {bus}，生产者和消费者是解耦的。",
         "reviewInPanel": "点评这张架构图（Archify 面板）",
         "scanned": "已扫描 {root}",
-        "kind.app": "运行在一台机器上的应用（桌面、移动、命令行、插件）",
-        "kind.service": "由联网服务组成的系统",
-        "reviewAs": "按{kind}检查。",
-        "reviewSwitch": "改按{kind}检查",
-        "rv.app-shared-state": "{n} 个部分直接读写「{store}」（{users}）。共享状态在应用里很正常，但改它的地方多了，值从哪来、被谁改就不好追；确认写入有统一的入口。",
-        "rv.app-hub": "{n} 个部分依赖「{name}」，它是核心模块：改它影响面大，最值得先写测试。",
-        "rv.app-outside": "{n} 个功能依赖「{name}」（{users}），它不归这个应用管：系统更新或对方改版都可能改变它的行为，这些功能在它失效时要能告诉用户。",
-        "rv.app-permissions": "{n} 个部分需要系统权限（{names}）。没授权或权限被收回时，它们要能降级，并告诉用户去哪里打开。",
-        "rv.app-ui-state": "界面统一经由「{store}」取数据，显示和干活的逻辑是分开的。",
+        "reviewHowCode": "还没有点评。点评由模型读 {repo} 的代码完成：先弄清它是什么软件、怎么运行，再只评这类软件真正重要的方面。每条结论都附上依据的文件和行号，插件核对这些位置确实存在后才保存。大约 1–3 分钟。",
+        "reviewHowDesign": "还没有点评。这张图是按描述画的，没有代码，所以点评针对的是图里的设计：每条结论都指明涉及哪些组件，不假设图以外的事实。",
+        "reviewBasisCode": "依据 {repo} 的代码（提交 {rev}）核实",
+        "reviewBasisDesign": "依据图里的设计（没有代码）",
+        "suggestion": "建议",
+        "citeHint": "查看这条依据的代码",
+        "reviewChecking": "正在核对依据…",
+        "reviewRefused": "没有保存：有依据核对不通过（模型会改）",
+        "reviewSaved": "已保存：{n} 条，每条都有依据",
         "newFrom": "从哪个项目画",
         "newFromHint": "可选：不选就只按你的描述画",
         "newWhatToDraw": "要画什么",
@@ -2068,7 +2068,7 @@ window.__ModuleLoader__.load({
         "needSomething": "选一个项目文件夹，或者写下要画什么。",
         "folderMissing": "这个路径下没有文件夹。",
         "reviewCount": "点评 · {n}",
-        "reviewOpenHint": "在图旁边打开这张架构图的结构点评",
+        "reviewOpenHint": "在图旁边打开这张架构图的点评",
         "typeHint": "鼠标移到卡片上，右边就显示它的样子",
         "promptTitle": "将要发送的提示词",
         "hidePrompt": "收起提示词",
@@ -2157,6 +2157,7 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: RENDER_TOOL, locale: NS }, withT(RenderToolView)));
         ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: CLI_TOOL, locale: NS }, withT(CliToolView)));
         ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: SCAN_TOOL, locale: NS }, withT(ScanToolView)));
+        ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({ name: 'tool.call.toolview', key: REVIEW_TOOL, locale: NS }, withT(ReviewToolView)));
         ctx.uiConversation.events.register(pageResultDefinition);
         ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: RESULT_KIND, locale: NS }, withT(PageRow)));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 31, label: () => tr('title') }, ArchifyGlyph));

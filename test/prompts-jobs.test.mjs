@@ -25,21 +25,21 @@ test('a new-diagram prompt names the skill, the type, the folder and the focus, 
   assert.ok(PICKABLE.includes('auto') && PICKABLE.includes('explainer'));
 });
 
-test('a review prompt carries the candidate, the findings and the shape of the answer', () => {
-  const zh = reviewPrompt({ lang: 'zh', title: '下单系统', candidate: '/w/.archify/a/candidate.json', findings: ['- [risk] x'], repo: '/w' });
-  assert.match(zh, /点评架构图「下单系统」描述的这个系统架构本身/);
-  assert.match(zh, /\/w\/\.archify\/a\/candidate\.json/);
-  assert.match(zh, /- \[risk\] x/);
-  assert.match(zh, /1\. 这是什么软件，一句话总评/);
-  assert.match(zh, /先用一句话说清这是什么类型的软件/);
-  const app = reviewPrompt({ lang: 'zh', title: '岛民', candidate: '/c.json', kind: 'app' });
-  assert.match(app, /运行在一台机器上的应用/);
-  assert.match(app, /横向扩展、消息队列、网关、集群、服务监控这些服务端的事在这里不适用/);
-  assert.match(app, /2\. 主要风险，按严重程度排（耦合、状态管理、系统与其他应用的依赖、权限、错误处理、性能）/);
-  assert.match(reviewPrompt({ lang: 'en', candidate: '/c.json', kind: 'app' }), /scaling out, message queues, gateways, clusters and service monitoring do not apply here/);
-  const en = reviewPrompt({ lang: 'en', candidate: '/c.json' });
-  assert.match(en, /Review the system architecture/);
-  assert.doesNotMatch(en, /structural checks/);
+test('a review prompt asks for a review from the code, every point cited, submitted for checking', () => {
+  const zh = reviewPrompt({ lang: 'zh', title: '岛民', candidate: '/w/.archify/a/candidate.json', repo: '/w', revision: 'abc1234def5678aa', basis: 'code' });
+  assert.match(zh, /对架构图「岛民」所描述的系统做一次专业的架构评审/);
+  assert.match(zh, /代码在 \/w（当前提交 abc1234def56）。评审必须以代码为准/);
+  assert.match(zh, /先读代码，弄清这是什么软件、怎么运行/);
+  assert.match(zh, /单机应用不谈横向扩展、消息队列、网关/);
+  assert.match(zh, /每条结论都要在代码里核实过，并给出依据：仓库根目录下的相对路径和行号范围/);
+  assert.match(zh, /调用 archify_review 提交：candidate 填 \/w\/\.archify\/a\/candidate\.json，basis 填 code/);
+  const design = reviewPrompt({ lang: 'zh', candidate: '/c.json' });
+  assert.match(design, /这张图是按描述画的，没有代码/);
+  assert.match(design, /\{"component": "<组件 id>"\}/);
+  assert.match(design, /basis 填 description/);
+  const en = reviewPrompt({ lang: 'en', candidate: '/c.json', repo: '/r', basis: 'code' });
+  assert.match(en, /Verify every point in the code and cite it/);
+  assert.match(en, /archify_review: candidate \/c\.json, basis code/);
 });
 
 test('a job follows its conversation from start to its page, and a review ends done', () => {

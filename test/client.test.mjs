@@ -179,6 +179,7 @@ test('the client registers both tool views, the page row, the panel and /archify
       ['tool.call.toolview', 'archify_render'],
       ['tool.call.toolview', 'archify_cli'],
       ['tool.call.toolview', 'archify_scan'],
+      ['tool.call.toolview', 'archify_review'],
       ['conversation.chat.node', 'archify-page'],
       ['sidebar.panellist', 'archify'],
       ['main', 'archify'],
@@ -380,53 +381,64 @@ test('New starts a diagram from a folder and a type in one click, and follows it
   assert.ok(by(tree, 'data-dsh-archify-draft')[0], 'Open in a conversation is offered');
 });
 
-test('Gallery reviews an architecture in the reader\'s language and asks the model for more', async () => {
-  const item = { id: 'p1', type: 'architecture', title: 'Shop', path: '/w/shop.html', folder: '/w/.archify/architecture-shop-1', version: 'v1', aspect: 0.6, sessionId: 's1', updatedAt: Date.now() };
+test('Gallery shows the model\'s checked review beside the drawing, with the code each point rests on', async () => {
+  const item = { id: 'p1', type: 'architecture', title: 'Islander', path: '/w/islander.html', folder: '/w/.archify/architecture-islander-1', version: 'v1', aspect: 0.6, sessionId: 's1', updatedAt: Date.now(), reviewedAt: 0 };
+  let reviewed = null;
   const { calls, render } = panelHarness({
-    '/__dsh_archify/list': { items: [item], total: 1, hasMore: false },
-    '/__dsh_archify/review': (_b, url) => ({
-      supported: true,
-      kind: /kind=service/.test(url) ? 'service' : 'app',
-      guessed: 'app',
-      summary: { components: 6, connections: 7, async: 1, boundaries: 1 },
-      findings: [
-        { code: 'shared-store', level: 'risk', params: { store: 'DB', n: 3, users: ['A', 'B', 'C'] } },
-        { code: 'deep-chain', level: 'warn', params: { hops: 5, path: ['Web', 'API', 'S1', 'S2', 'S3', 'DB'] } },
-        { code: 'async-decoupling', level: 'good', params: { bus: ['Queue'] } },
-      ],
-    }),
-    '/__dsh_archify/ask': (b) => ({ ok: true, job: { id: 'r1', kind: 'review', pageId: b.id, state: 'running', activity: 'thinking', steps: 0, pages: [], startedAt: Date.now(), sessionId: 's1' } }),
+    '/__dsh_archify/list': () => ({ items: [{ ...item, reviewedAt: reviewed ? 1 : 0 }], total: 1, hasMore: false }),
+    '/__dsh_archify/review': () => ({ supported: true, basis: 'code', repo: 'islander', review: reviewed }),
+    '/__dsh_archify/ask': (b) => ({ ok: true, job: { id: 'r1', kind: 'review', pageId: b.id, state: 'running', activity: 'reading', steps: 3, pages: [], startedAt: Date.now(), sessionId: 's1' } }),
   });
   let tree = render();
   await flush();
   tree = render();
   await flush();
   tree = render();
-  assert.equal(tree.props['data-dsh-archify-view'], 'gallery');
-  // The header says how many points want a look; the review opens beside the drawing.
+  // No review yet: the header offers one, and says what it will rest on.
   const toReview = by(tree, 'data-dsh-archify-to-review', 'p1')[0];
-  assert.match(text(toReview).join(''), /点评 · 2/);
+  assert.match(text(toReview).join(''), /^点评$/);
   toReview.props.onClick(ev);
   tree = render();
-  assert.ok(by(tree, 'data-dsh-archify-review-sheet', 'p1')[0], 'the sheet is open');
-  const findings = by(tree, 'data-dsh-archify-finding');
-  assert.deepEqual(findings.map((f) => f.props['data-dsh-archify-finding']), ['shared-store', 'deep-chain', 'async-decoupling']);
-  assert.match(text(findings[0]).join(''), /风险.*3 个服务直接用同一个数据存储「DB」（A、B、C）/);
-  assert.match(text(findings[1]).join(''), /Web → API → S1 → S2 → S3 → DB/);
-  assert.match(text(by(tree, 'data-dsh-archify-review', 'p1')[0]).join(''), /6 个组件 · 7 条连线（1 条异步）· 1 个边界/);
+  const empty = by(tree, 'data-dsh-archify-review-empty', 'code')[0];
+  assert.match(text(empty).join(''), /模型读 islander 的代码完成.*插件核对这些位置确实存在后才保存/);
+  assert.equal(by(tree, 'data-dsh-archify-finding').length, 0, 'no guessed findings');
   by(tree, 'data-dsh-archify-ask', 'p1')[0].props.onClick(ev);
   await flush();
-  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh', kind: 'app' });
+  assert.deepEqual(calls.find((c) => c.url === '/__dsh_archify/ask').body, { id: 'p1', lang: 'zh' });
   tree = render();
   assert.equal(by(tree, 'data-dsh-archify-ask').length, 0, 'the running review replaces the button');
-  // The review says which kind of software it assumed, and switches on a click.
-  assert.match(text(by(tree, 'data-dsh-archify-review-kind', 'app')[0]).join(''), /按运行在一台机器上的应用（桌面、移动、命令行、插件）检查。.*改按由联网服务组成的系统检查/);
-  by(tree, 'data-dsh-archify-review-switch', 'service')[0].props.onClick(ev);
+  // The model saved a review: it shows with its basis and each point's citations.
+  reviewed = {
+    basis: 'code',
+    repo: 'islander',
+    revision: 'abc1234def5678',
+    at: Date.now(),
+    software: 'macOS 菜单栏应用（Swift，AppKit + SwiftUI）',
+    verdict: '结构清楚，主要风险在对系统菜单栏私有行为的依赖。',
+    findings: [
+      { level: 'warn', title: '依赖菜单栏窗口层的实现细节', detail: '扫描靠窗口层级判断图标。', suggestion: '加一层检测，失败时提示用户。', evidence: [{ path: 'Islander/MenuBarScanner.swift', line: 40, end_line: 52, excerpt: 'let windows = CGWindowListCopyWindowInfo(...)', more: false, note: '' }] },
+      { level: 'good', title: '状态集中在 HiddenItemsStore', detail: '界面只读这一个仓库。', suggestion: '', evidence: [{ path: 'Islander/HiddenItemsStore.swift', line: 1, end_line: 30, excerpt: '@Observable final class HiddenItemsStore', more: true, note: '' }] },
+    ],
+  };
   tree = render();
   await flush();
   tree = render();
-  assert.ok(calls.some((c) => /\/__dsh_archify\/review\?id=p1&kind=service/.test(c.url)), 'refetched as services');
-  assert.ok(by(tree, 'data-dsh-archify-review-kind', 'service')[0]);
+  await new Promise((resolve) => setTimeout(resolve, 5100));
+  await flush();
+  tree = render();
+  await flush();
+  tree = render();
+  const done = by(tree, 'data-dsh-archify-review-done', 'code')[0];
+  assert.ok(done, 'the saved review shows');
+  assert.match(text(done).join(''), /结构清楚.*macOS 菜单栏应用.*依据 islander 的代码（提交 abc1234）核实/);
+  assert.deepEqual(by(tree, 'data-dsh-archify-finding').map((f) => f.props['data-dsh-archify-finding']), ['warn', 'good']);
+  assert.match(text(by(tree, 'data-dsh-archify-to-review', 'p1')[0]).join(''), /点评 · 1/);
+  // A citation opens to its code.
+  const cite = by(tree, 'data-dsh-archify-cite', 'Islander/MenuBarScanner.swift:40–52')[0];
+  assert.ok(cite);
+  findAll(cite, (n) => n.type === 'button')[0].props.onClick(ev);
+  tree = render();
+  assert.match(text(by(tree, 'data-dsh-archify-cite', 'Islander/MenuBarScanner.swift:40–52')[0]).join(''), /CGWindowListCopyWindowInfo/);
   // Closing the sheet leaves the drawing alone.
   by(tree, 'data-dsh-archify-review-close')[0].props.onClick(ev);
   tree = render();
@@ -460,8 +472,6 @@ test('every word the client uses is in both dictionaries', async () => {
   for (const l of ['risk', 'warn', 'info', 'good']) used.add(`level.${l}`);
   for (const k of ['auto', 'architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle', 'erd', 'class', 'tree', 'timeline', 'waterfall', 'explainer']) used.add(`use.${k}`);
   for (const k of ['code', 'mermaid', 'edit', 'compare', 'explainer', 'brands', 'review', 'viewer']) used.add(`guide.${k}`).add(`guide.${k}.note`);
-  const review = readFileSync(join(root, 'lib', 'review.mjs'), 'utf8');
-  for (const [, code] of review.matchAll(/add\('([a-z-]+)'/g)) used.add(`rv.${code}`);
   const { activityOf } = await import('../lib/jobs.mjs');
   for (const name of ['archify_render', 'archify_scan', 'load_skill', 'edit', 'read']) used.add(`act.${activityOf(name)}`);
   for (const key of used) {
