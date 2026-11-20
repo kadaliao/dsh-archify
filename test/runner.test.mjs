@@ -80,6 +80,36 @@ test('Generate starts a conversation in the project\'s workspace with the prompt
   assert.doesNotMatch(p.prompt, /dependencies express/);
 });
 
+test('Generate asked twice with the same settings while the first is going follows that run', async () => {
+  const { ctx, seen } = fakeHarness();
+  const cache = mkdtempSync(join(tmpdir(), 'archify-cache-'));
+  const jobs = createJobs(cache);
+  const runner = createRunner(ctx, { jobs, store: createStore(cache), workdir: join(cache, 'work') });
+  const dir = gitRepo();
+  const body = { dir, type: 'architecture', focus: '后端服务', lang: 'zh', quality: 'standard' };
+  // Two clicks at once: one conversation, and both answers name its job.
+  const [a, b] = await Promise.all([runner.generate(body), runner.generate({ ...body, dir: `${dir}` })]);
+  assert.equal(seen.created.length, 1);
+  assert.equal(a.job.id, b.job.id);
+  assert.equal([a, b].filter((r) => r.already).length, 1);
+  // A third click while it runs: still that run.
+  const c = await runner.generate(body);
+  assert.equal(c.already, true);
+  assert.equal(c.job.id, a.job.id);
+  assert.equal(seen.created.length, 1);
+  // Different settings are a different run.
+  const d = await runner.generate({ ...body, quality: 'showcase' });
+  assert.notEqual(d.job.id, a.job.id);
+  assert.equal(seen.created.length, 2);
+  // Once the run is over, the same settings start a new one.
+  jobs.delivered(a.job.sessionId, 'p1');
+  jobs.idle(a.job.sessionId);
+  const e = await runner.generate(body);
+  assert.equal(e.already, undefined);
+  assert.notEqual(e.job.id, a.job.id);
+  assert.equal(seen.created.length, 3);
+});
+
 test('Generate refuses a folder it cannot use, and says when the Harness cannot start conversations', async () => {
   assert.throws(() => folderOf('relative/path'), /absolute/);
   assert.throws(() => folderOf('/no/such/folder/anywhere'), /not a folder/);

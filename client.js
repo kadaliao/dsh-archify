@@ -937,6 +937,10 @@ window.__ModuleLoader__.load({
       const [folderError, setFolderError] = useState('');
       const [showPrompt, setShowPrompt] = useState(false);
       const [busy, setBusy] = useState(false);
+      // The run the last Generate started, and the settings it was started with.
+      const [sent, setSent] = useState(null);
+      // Set before the first await: a second click in the same moment finds it, before any re-render.
+      const sending = useRef(false);
       const [error, setError] = useState('');
       const [copied, setCopied] = useState(false);
       const [example, setExample] = useState('');
@@ -973,6 +977,9 @@ window.__ModuleLoader__.load({
       const pasteHere = mermaid && !fromCode;
       const body = { dir: folder, type, focus, quality, lang };
       const ready = fromCode ? !folderError : focus.trim() !== '';
+      const sig = JSON.stringify(body);
+      // Generate stays off while the run it started with these same settings is going; any change starts another.
+      const already = sent?.sig === sig && live((jobs ?? []).find((j) => j.id === sent.id));
 
       // The prompt as it will be sent, and whether the folder is there, follow the form as it changes.
       useEffect(() => {
@@ -989,16 +996,23 @@ window.__ModuleLoader__.load({
 
       const promptNow = () => postJson(PROMPT_ROUTE, body).then((r) => (r?.ok ? r.prompt : Promise.reject(new Error(r?.reason || t('actionFailed')))));
       const generate = () => {
-        if (!ready || busy) return;
+        if (!ready || busy || already || sending.current) return;
+        sending.current = true;
         setBusy(true);
         setError('');
         void postJson(GENERATE_ROUTE, body)
           .then((r) => {
-            if (r?.job) onJob?.(r.job);
+            if (r?.job) {
+              onJob?.(r.job);
+              setSent({ sig, id: r.job.id });
+            }
             if (!r?.ok) setError(r?.reason || t('actionFailed'));
           })
           .catch(() => setError(t('actionFailed')))
-          .finally(() => setBusy(false));
+          .finally(() => {
+            sending.current = false;
+            setBusy(false);
+          });
       };
       const openDraft = () => {
         if (!ready) return;
@@ -1167,7 +1181,9 @@ window.__ModuleLoader__.load({
         ? h('span', { style: { fontSize: 12, color: C.error } }, error)
         : !ready
           ? h('span', { style: { fontSize: 12, color: fromCode && folderError ? C.error : C.faint } }, fromCode && folderError ? t('folderMissing') : t('needSomething'))
-          : null;
+          : already
+            ? h('span', { 'data-dsh-archify-already': true, style: { fontSize: 12, color: C.faint } }, t('alreadyRunning'))
+            : null;
       const footer = h(
         'div',
         { 'data-dsh-archify-actions': true, style: { flex: 'none', borderTop: `1px solid ${C.border1}`, background: C.base, padding: '10px 22px 12px', display: 'flex', flexDirection: 'column', gap: 8 } },
@@ -1177,7 +1193,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          h(Btn, { kind: 'primary', onClick: generate, disabled: !ready || busy || !canRun, 'data-dsh-archify-generate': true, title: canRun ? t('generateHint') : t('cannotRun') }, h(ArchifyGlyph, { size: 14 }), busy ? t('starting') : t('generate')),
+          h(Btn, { kind: 'primary', onClick: generate, disabled: !ready || busy || already || !canRun, 'data-dsh-archify-generate': true, title: canRun ? t('generateHint') : t('cannotRun') }, h(ArchifyGlyph, { size: 14 }), busy ? t('starting') : already ? t('generating') : t('generate')),
           env?.canDraft?.() ? h(Btn, { onClick: openDraft, disabled: !ready, 'data-dsh-archify-draft': true, title: t('openInChatHint') }, h(ChatIcon, { size: 14 }), t('openInChat')) : null,
           h(Btn, { onClick: copy, disabled: !ready }, h(CopyIcon, { size: 14 }), copied ? t('copied') : t('copyPrompt')),
           hint,
@@ -2024,6 +2040,8 @@ window.__ModuleLoader__.load({
         "generateHint": "Starts a conversation of its own and draws the diagram there; follow it here.",
         "cannotRun": "This Harness cannot start conversations from a plugin; use Open in a conversation.",
         "starting": "Starting…",
+        "generating": "Drawing…",
+        "alreadyRunning": "This one is already being drawn; change the form to start another.",
         "openInChat": "Open in a conversation",
         "openInChatHint": "A new conversation in that folder with this prompt in the composer, for you to send",
         "copyPrompt": "Copy the prompt",
@@ -2246,6 +2264,8 @@ window.__ModuleLoader__.load({
         "generateHint": "开一个新会话在里面画图，进度在这里看。",
         "cannotRun": "这个 Harness 不支持插件开会话，用「在对话中打开」。",
         "starting": "正在开始…",
+        "generating": "正在画…",
+        "alreadyRunning": "这张图已经在画了；改一下上面的设置才能再开一个。",
         "openInChat": "在对话中打开",
         "openInChatHint": "在那个文件夹开一个新会话，提示词填进输入框，你确认后发送",
         "copyPrompt": "复制提示词",

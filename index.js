@@ -15,7 +15,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, sep } from 'node:path';
@@ -790,12 +790,20 @@ export function createRunner(ctx, { jobs, store, workdir }) {
     },
     /** Start a new diagram in a conversation of its own. */
     async generate(body) {
-      const { dir, type, prompt } = await this.prompt(body, { scanned: true });
-      const focus = String(body.focus ?? '').trim().slice(0, 200);
+      const dir = folderOf(body.dir);
+      const type = PICKABLE.includes(body.type) ? body.type : 'auto';
+      const focus = String(body.focus ?? '').trim();
       const lang = body.lang === 'zh' ? 'zh' : 'en';
+      const quality = body.quality === 'standard' ? 'standard' : 'showcase';
+      // The same settings while their run is still going (a second click, another window) get that run, not a new one.
+      // Nothing is awaited between the check and the job, so two requests at once still start one.
+      const key = createHash('sha256').update(JSON.stringify(['diagram', dir, type, focus, quality, lang])).digest('hex').slice(0, 24);
+      const same = jobs.running(key);
+      if (same) return { ok: true, already: true, job: same };
       const title = ['Archify', type === 'auto' ? '' : typeName(type, lang), dir ? basename(dir) : focus.slice(0, 40)].filter(Boolean).join(' · ');
-      const job = jobs.create({ kind: 'diagram', type, dir, focus, lang, title });
+      const job = jobs.create({ kind: 'diagram', key, type, dir, focus: focus.slice(0, 200), lang, quality, title });
       try {
+        const { prompt } = await this.prompt(body, { scanned: true });
         const sessionId = await send({ text: prompt, title, dir });
         jobs.update(job.id, { sessionId, state: 'running', activity: 'thinking', seenAt: Date.now() });
         return { ok: true, job: jobs.get(job.id) };

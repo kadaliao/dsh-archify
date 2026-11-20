@@ -358,6 +358,18 @@ test('New starts a diagram from a folder and a type in one click, and follows it
   const sent = calls.find((c) => c.url === '/__dsh_archify/generate');
   assert.deepEqual(sent.body, { dir: '/code/shop', type: 'sequence', focus: '用户登录', quality: 'showcase', lang: 'zh' });
   tree = render();
+  // While that run goes, the same settings cannot start another; a change can.
+  assert.equal(generate().props.disabled, true, 'already running');
+  assert.match(text(by(tree, 'data-dsh-archify-already')[0]).join(''), /已经在画了/);
+  generate().props.onClick(ev);
+  await flush();
+  assert.equal(calls.filter((c) => c.url === '/__dsh_archify/generate').length, 1);
+  by(tree, 'data-dsh-archify-focus')[0].props.onChange({ target: { value: '用户登出' } });
+  tree = render();
+  assert.equal(generate().props.disabled, false, 'other settings are another run');
+  by(tree, 'data-dsh-archify-focus')[0].props.onChange({ target: { value: '用户登录' } });
+  tree = render();
+  assert.equal(generate().props.disabled, true);
   const row = by(tree, 'data-dsh-archify-job', 'j1')[0];
   assert.ok(row, 'the run is listed');
   assert.match(text(row).join(' '), /时序图.*shop.*扫描仓库/);
