@@ -74,7 +74,7 @@ Each page is a standalone HTML file that works offline, so you can send it to so
 
 ## The Archify panel
 
-**Archify** in the left sidebar (or `/archify`) has two tabs, **New** and **Gallery**, and a **?**.
+**Archify** in the left sidebar (or `/archify`) has two tabs, **New** and **Gallery**, and a **How to use** button.
 
 **New** draws a diagram without writing a prompt:
 
@@ -108,8 +108,7 @@ and **Copy the prompt** copies it for any conversation.
 to preview it; from there open it full screen, in the browser, in its folder, or go back to the
 conversation it was drawn in. **Remove** only takes it off the list; the file stays.
 
-For an architecture diagram, **Review** in the header opens the review beside the drawing (docked
-there on a wide screen). A review is written by the model from the code, never guessed from the
+For an architecture diagram, **Review** in the header opens the review beside the drawing. A review is written by the model from the code, never guessed from the
 drawing: **Review it from the code** asks the conversation that drew the diagram to read the
 repository, establish what kind of software it is and how it runs, and judge only what matters for
 that kind (no scaling out or message queues for an app that runs on one machine). Every point
@@ -123,16 +122,27 @@ components it is about. Whether each argument holds is still yours to judge: the
 there so you can. The conversation card of an architecture diagram has a **Review** button that opens it here.
 
 **Edit**, in the same header, changes the diagram without leaving the panel: say what to change, or
-start from a suggestion (tidy the layout, another style, the text in another language, brand marks,
-split or merge parts, a before/after comparison page). It goes to the conversation that drew the
-diagram, which knows its context, and the page here updates when it is done. Edit and Review sit
-beside the drawing: docked on a wide screen, over its right side on a narrower one.
+start from a suggestion. The ones that are complete come first and can be sent as they are (tidy
+the layout, another style, the text in another language, a legend, brand marks); the ones with a
+blank (split a part, a before/after comparison page) select the blank for your words, and Send
+waits until no dots are left. It goes to the conversation that drew the diagram, which knows its
+context, and the page here updates when it is done. Edit and Review sit beside the drawing: the
+list narrows so the whole drawing stays in view next to them, and only on a window too narrow
+for both do they lie over its right side.
 
 There is no separate help page. Each hint sits where it is used: in New, that Mermaid can be pasted
-as is and, for an explainer, the rules line for pages without asking; in the Gallery, the
-suggestions for a change; in full screen, the reader's shortcuts the first few times. **?** next to
-the panel's tabs opens a short card: the ways to start a diagram, what can be done with one you
-have, and explainers, each with a button to where it is done.
+as is and, for an explainer, the rules line for pages without asking and where it goes; in the
+Gallery, the suggestions for a change; in full screen, the reader's shortcuts the first few times.
+**How to use**, next to the panel's tabs, opens a short card: each thing Archify does, in a line,
+with a button named for what it does (start a diagram, paste Mermaid, edit a diagram, review it,
+full screen, make an explainer). It lands where the thing is done, with the caret in New's "What to
+draw" box; Review keeps the selected architecture, else picks one drawn from code, and says so when
+there is none yet. The only prompt it offers to copy is one that works in any conversation; the
+card says that a repository is drawn from a conversation opened in it. A click outside closes it.
+
+Pages without asking come from your instructions: DeepSeek Harness reads `~/.dsh/AGENTS.md` into
+every conversation and a project's `AGENTS.md` (or `CLAUDE.md`) into the conversations opened in
+it. Add `[archify explainer: proactive]` to one of them; conversations started after that follow it.
 
 ## Fast by default
 

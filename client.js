@@ -160,6 +160,7 @@ window.__ModuleLoader__.load({
     const TrashIcon = ({ size = 15 }) => svg(size, ['M4 7h16', 'M9 7V4h6v3', 'M6 7l1 13h10l1-13']);
     const EditIcon = ({ size = 15 }) => svg(size, ['M4 20h4l10.5-10.5a2.1 2.1 0 0 0-4-4L4 16v4z', 'M13.5 6.5l4 4']);
     const ReviewIcon = ({ size = 15 }) => svg(size, ['M10 6h10', 'M10 12h10', 'M10 18h10', 'M3.5 6l1.5 1.5L7.5 5', 'M3.5 12l1.5 1.5L7.5 11', 'M3.5 18l1.5 1.5L7.5 17']);
+    const HelpIcon = ({ size = 15 }) => svg(size, ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6', 'M12 17h.01']);
 
     /** Opens the Archify panel; set when the client applies. */
     const panelOpener = { fn: null };
@@ -678,10 +679,12 @@ window.__ModuleLoader__.load({
 
     // --- the panel ---------------------------------------------------------------------
     //
-    // Three tabs: New (a diagram from a project folder or a description, in one
-    // click), Gallery (every page, with a structural review of an architecture)
-    // and Guide (what Archify does, as prompts to copy).
+    // Two tabs: New (a diagram from a project folder or a description, in one
+    // click) and Gallery (every page, to edit and, for an architecture, review);
+    // and a "How to use" card that leads to each.
 
+    /** The line that lets the model make explainer pages unasked, read from the person's AGENTS.md. */
+    const RULES_LINE = '[archify explainer: proactive]';
     const PICKABLE = ['auto', 'architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle', 'erd', 'class', 'tree', 'timeline', 'waterfall', 'explainer'];
     const langOf = (t) => (typeof t === 'function' && t('lang') === 'zh' ? 'zh' : 'en');
     const listJoin = (t, xs) => (Array.isArray(xs) ? xs.slice(0, 6).join(langOf(t) === 'zh' ? '、' : ', ') + (xs.length > 6 ? '…' : '') : String(xs ?? ''));
@@ -691,7 +694,7 @@ window.__ModuleLoader__.load({
     /** Example focuses per type: for a codebase (`repo`) and for a described subject (`desc`). */
     const EXAMPLES = {
       zh: {
-        auto: { repo: ['画出这个仓库的整体结构', '这个项目处理一个请求的完整路径'], desc: ['把下面这段说明画成最合适的图：……'] },
+        auto: { repo: ['画出这个仓库的整体结构', '这个项目处理一个请求的完整路径'], desc: ['扫码登录网页：网页显示二维码，手机扫码确认，服务端通知网页登录成功', '一个请求从浏览器到数据库：DNS、CDN、负载均衡、应用服务、Redis 缓存、MySQL', '请假流程：员工申请，主管审批，超过 3 天还要部门经理审批，HR 备案'] },
         architecture: { repo: ['画整体架构，标出对外接口和数据存储', '只画后端服务之间怎么调用', '部署架构：容器、数据库、缓存和外部服务'], desc: ['电商下单系统：Web/App 客户端、API 网关、订单服务、库存服务、支付服务（对接第三方支付）、消息队列、订单库和 Redis 缓存', '家里的网络：光猫、路由器、NAS、电视、手机和笔记本'] },
         workflow: { repo: ['从提交代码到上线的发布流程（看 CI 配置）', '用户注册的处理流程，包括校验失败和重试'], desc: ['报销审批：员工提交、主管审批（超过 5000 元还要总监审批）、财务打款', '搬家前一个月的准备步骤'] },
         sequence: { repo: ['用户登录：前端、网关、认证服务、数据库之间的调用和返回', '下单接口的一次请求经过哪些模块'], desc: ['缓存未命中时的一次请求：客户端、服务、Redis、数据库', 'OAuth 授权码登录的完整往返'] },
@@ -705,7 +708,7 @@ window.__ModuleLoader__.load({
         explainer: { repo: ['用一页讲清楚这个项目做什么、怎么跑起来', '这个仓库的认证是怎么做的'], desc: ['HTTPS 第一次访问为什么慢', '对比 Postgres 和 MySQL，给团队选型用'] },
       },
       en: {
-        auto: { repo: ['The overall structure of this repository', 'The full path one request takes through this project'], desc: ['Draw the description below as whatever diagram fits best: …'] },
+        auto: { repo: ['The overall structure of this repository', 'The full path one request takes through this project'], desc: ['QR-code sign-in: the web page shows a code, the phone app scans and confirms, the server tells the page it is signed in', 'One request from browser to database: DNS, CDN, load balancer, app servers, Redis cache, MySQL', 'Leave requests: the employee applies, the manager approves (the department head too above 3 days), HR files it'] },
         architecture: { repo: ['The overall architecture, with external interfaces and data stores', 'Only how the backend services call each other', 'The deployment: containers, databases, caches and outside services'], desc: ['An online shop: web/app clients, API gateway, order, inventory and payment services (with a payment provider), a message queue, the orders database and a Redis cache', 'My home network: modem, router, NAS, TV, phones and laptops'] },
         workflow: { repo: ['The release process from commit to production (from the CI config)', 'How a sign-up is handled, including validation failures and retries'], desc: ['Expense approval: an employee submits, the manager approves (a director too above $5,000), finance pays', 'The month before moving house, step by step'] },
         sequence: { repo: ['Login: the calls and returns between frontend, gateway, auth service and database', 'Which modules one checkout request goes through'], desc: ['A request on a cache miss: client, service, Redis, database', 'The full OAuth authorization-code round trip'] },
@@ -724,18 +727,22 @@ window.__ModuleLoader__.load({
     const EDIT_SUGGESTIONS = {
       zh: {
         all: ['整理一下布局，减少交叉和绕线', '换成 blueprint 风格', '图里的文字改成英文', '加上图例'],
-        architecture: ['真实产品用官方品牌图标（AWS、Redis、Stripe……）', '把「……」拆成两个组件：……', '画一张改造前后的对比页，改动是：……'],
+        architecture: ['真实产品换成官方品牌图标（如 AWS、Redis、Stripe）', '把「……」拆成两个组件：……', '画一张改造前后的对比页，改动是：……'],
         explainer: ['结论写得更直接', '加一张对比表'],
       },
       en: {
         all: ['Tidy the layout: fewer crossings and detours', 'Switch to the blueprint style', 'Write the diagram text in Chinese', 'Add a legend'],
-        architecture: ['Use the official brand marks for real products (AWS, Redis, Stripe…)', 'Split "…" into two components: …', 'Make a before/after comparison page; the change is: …'],
+        architecture: ['Use the official brand marks for real products (e.g. AWS, Redis, Stripe)', 'Split "…" into two components: …', 'Make a before/after comparison page; the change is: …'],
         explainer: ['Make the conclusion more direct', 'Add a comparison table'],
       },
     };
+    /** A suggestion's blank: the dots where the person's words go. */
+    const BLANK = /…+/;
+    /** The suggestions for a type: complete ones first (one click to send), those with a blank after. */
     const editSuggestions = (lang, type) => {
       const d = EDIT_SUGGESTIONS[lang] ?? EDIT_SUGGESTIONS.en;
-      return type === 'explainer' ? d.explainer : [...(d[type] ?? []), ...d.all];
+      const list = type === 'explainer' ? d.explainer : [...d.all, ...(d[type] ?? [])];
+      return [...list.filter((s) => !BLANK.test(s)), ...list.filter((s) => BLANK.test(s))];
     };
 
     /** A type's thumbnail in the Harness's theme, and its example as a live page. */
@@ -763,7 +770,7 @@ window.__ModuleLoader__.load({
 
     const fieldStyle = { font: 'inherit', fontSize: SMALL, color: C.primary, background: C.layer2, border: `1px solid ${C.border1}`, borderRadius: 8, padding: '7px 10px', outline: 'none', boxSizing: 'border-box' };
 
-    function Btn({ kind = 'plain', onClick, disabled, title, children, ...rest }) {
+    function Btn({ kind = 'plain', small = false, onClick, disabled, title, children, ...rest }) {
       const primary = kind === 'primary';
       return h(
         'button',
@@ -780,10 +787,11 @@ window.__ModuleLoader__.load({
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
-            height: 30,
-            padding: '0 12px',
+            height: small ? 26 : 30,
+            padding: small ? '0 10px' : '0 12px',
             font: 'inherit',
-            fontSize: SMALL,
+            fontSize: small ? 12 : SMALL,
+            flex: 'none',
             fontWeight: primary ? 620 : 500,
             color: primary ? 'var(--dsw-alias-label-on-brand, #fff)' : C.primary,
             background: primary ? C.label : C.layer2,
@@ -932,8 +940,12 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const [copied, setCopied] = useState(false);
       const [example, setExample] = useState('');
+      const [rulesCopied, setRulesCopied] = useState(false);
+      // Come to paste Mermaid: the box says so until something is in it.
+      const [mermaid, setMermaid] = useState(seed?.aim === 'mermaid');
+      const drawBox = useRef(null);
       const seedKey = useRef(seed?.at ?? 0);
-      // A Guide example or a gallery action fills the form.
+      // A "How to use" card button or the empty gallery fills the form.
       if (seed && seed.at !== seedKey.current) {
         seedKey.current = seed.at;
         // A described example draws that description, not the folder's code.
@@ -941,9 +953,24 @@ window.__ModuleLoader__.load({
         if (seed.type) setType(seed.type);
         if (seed.focus !== undefined) setFocus(seed.focus);
         if (seed.dir !== undefined) setDir(seed.dir);
+        setMermaid(seed.aim === 'mermaid');
       }
+      // Landed here from a jump: the caret waits in "What to draw", once per jump.
+      useEffect(() => {
+        const el = drawBox.current;
+        if (!seed?.aim || seed.landed || !el) return undefined;
+        seed.landed = true;
+        try {
+          el.scrollIntoView?.({ block: 'nearest' });
+          el.focus({ preventScroll: true });
+        } catch {
+          // Focus is a convenience.
+        }
+        return undefined;
+      }, [seed?.at]);
       const folder = dir.trim();
       const fromCode = folder !== '';
+      const pasteHere = mermaid && !fromCode;
       const body = { dir: folder, type, focus, quality, lang };
       const ready = fromCode ? !folderError : focus.trim() !== '';
 
@@ -1062,7 +1089,16 @@ window.__ModuleLoader__.load({
         h(
           Step,
           { n: 3, title: t('newWhatToDraw'), aside: fromCode ? t('optional') : t('required') },
-          h('textarea', { value: focus, rows: fromCode ? 2 : 4, placeholder: examples[0] ?? '', onChange: (e) => setFocus(e.target.value), 'data-dsh-archify-focus': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
+          pasteHere ? h('div', { 'data-dsh-archify-mermaid-hint': true, style: { fontSize: 12.5, fontWeight: 600, color: C.label } }, t('mermaidHint')) : null,
+          h('textarea', {
+            ref: drawBox,
+            value: focus,
+            rows: fromCode ? 2 : mermaid ? 6 : 4,
+            placeholder: pasteHere ? t('mermaidPlaceholder') : !fromCode && type === 'auto' ? t('autoPlaceholder') : examples[0] ?? '',
+            onChange: (e) => setFocus(e.target.value),
+            'data-dsh-archify-focus': true,
+            style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55, ...(pasteHere ? { borderColor: C.label, fontFamily: 'var(--dsw-font-mono, ui-monospace, monospace)', fontSize: 12 } : {}) },
+          }),
           h(
             'div',
             { 'data-dsh-archify-run-kind': fromCode ? 'code' : 'describe', style: { display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12, lineHeight: 1.55, color: C.muted, padding: '7px 10px', borderRadius: 8, background: C.layer2 } },
@@ -1072,10 +1108,26 @@ window.__ModuleLoader__.load({
           type === 'explainer'
             ? h(
                 'div',
-                { 'data-dsh-archify-rules-hint': true, style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: C.muted, lineHeight: 1.55 } },
-                h('span', null, t('helpRules')),
-                h('code', { style: { fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2, color: C.primary } }, '[archify explainer: proactive]'),
-                h(Btn, { onClick: () => copyText('[archify explainer: proactive]') }, t('copyLine')),
+                { 'data-dsh-archify-rules-hint': true, style: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: C.muted, lineHeight: 1.55 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                  h('span', null, t('rulesWhy')),
+                  h('code', { style: { fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2, color: C.primary } }, RULES_LINE),
+                  h(
+                    Btn,
+                    {
+                      small: true,
+                      onClick: () => {
+                        copyText(RULES_LINE);
+                        setRulesCopied(true);
+                        setTimeout(() => setRulesCopied(false), 1400);
+                      },
+                    },
+                    rulesCopied ? t('copied') : t('copyLine'),
+                  ),
+                ),
+                h('span', null, t('rulesWhere')),
               )
             : null,
           examples.length > 0
@@ -1240,10 +1292,34 @@ window.__ModuleLoader__.load({
       const [text, setText] = useState('');
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState('');
+      // A picked suggestion with a blank: Send waits until the dots are replaced.
+      const [blanks, setBlanks] = useState(false);
+      const [caret, setCaret] = useState(null);
+      const box = useRef(null);
       const job = (jobs ?? []).find((j) => j.kind === 'edit' && j.pageId === item.id);
       const running = job && live(job);
+      const waiting = blanks && BLANK.test(text);
+      const suggestions = editSuggestions(langOf(t), item.type);
+      // The caret goes where the person's words go: the first blank selected, else the end.
+      useEffect(() => {
+        const el = box.current;
+        if (!caret || !el) return undefined;
+        try {
+          el.focus();
+          el.setSelectionRange(caret.start, caret.end);
+        } catch {
+          // Selection is a convenience.
+        }
+        return () => {};
+      }, [caret]);
+      const pick = (s) => {
+        const m = BLANK.exec(s);
+        setText(s);
+        setBlanks(Boolean(m));
+        setCaret(m ? { start: m.index, end: m.index + m[0].length } : { start: s.length, end: s.length });
+      };
       const send = () => {
-        if (!text.trim() || busy || running) return;
+        if (!text.trim() || busy || running || waiting) return;
         setBusy(true);
         setError('');
         void postJson(EDIT_ROUTE, { id: item.id, text, lang: langOf(t) })
@@ -1259,32 +1335,46 @@ window.__ModuleLoader__.load({
         'div',
         { 'data-dsh-archify-edit': item.id, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h('div', { style: { fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, t('editHow')),
-        h('textarea', { value: text, rows: 4, placeholder: t('editPlaceholder'), onChange: (e) => setText(e.target.value), 'data-dsh-archify-edit-text': true, style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 } }),
+        h('textarea', {
+          ref: box,
+          value: text,
+          rows: 4,
+          placeholder: t('editPlaceholder'),
+          onChange: (e) => {
+            setText(e.target.value);
+            if (!e.target.value.trim()) setBlanks(false);
+          },
+          'data-dsh-archify-edit-text': true,
+          style: { ...fieldStyle, width: '100%', resize: 'vertical', lineHeight: 1.55 },
+        }),
         h(
           'div',
           { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-          editSuggestions(langOf(t), item.type).map((c) => h(Chip, { key: c, on: text === c, title: c, onClick: () => setText(c), 'data-dsh-archify-edit-chip': true }, c)),
+          suggestions.map((c) => h(Chip, { key: c, on: text === c, title: c, onClick: () => pick(c), 'data-dsh-archify-edit-chip': BLANK.test(c) ? 'blank' : 'complete' }, c)),
         ),
         h(
           'div',
           { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          h(Btn, { kind: 'primary', onClick: send, disabled: !text.trim() || busy || running || env?.canRun?.() === false, 'data-dsh-archify-edit-send': item.id }, h(ChatIcon, { size: 14 }), t('editSend')),
+          h(Btn, { kind: 'primary', onClick: send, disabled: !text.trim() || busy || running || waiting || env?.canRun?.() === false, 'data-dsh-archify-edit-send': item.id }, h(ChatIcon, { size: 14 }), t('editSend')),
+          waiting ? h('span', { 'data-dsh-archify-edit-blank': true, style: { fontSize: 12, color: C.label } }, t('editFillBlank')) : null,
           error ? h('span', { style: { fontSize: 12, color: C.error } }, error) : null,
         ),
         job ? h(JobRow, { t, job, env, onShowPage, onDismiss }) : null,
-        h('div', { style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, t('editNote')),
+        // Said once: beside Send while a blank waits, else here when a suggestion has one.
+        !waiting && suggestions.some((c) => BLANK.test(c)) ? h('div', { 'data-dsh-archify-edit-note': true, style: { fontSize: 11.5, color: C.faint, lineHeight: 1.6 } }, t('editNote')) : null,
       );
     }
 
-    /** Beside a drawing: changing it, and (for an architecture) its review; docked on a wide pane, over the drawing on a narrow one. */
-    function SidePanel({ t, item, mode, onMode, onClose, docked, children }) {
+    /** Beside a drawing: changing it, and (for an architecture) its review; docked when the drawing still fits beside it, over the drawing when not. */
+    function SidePanel({ t, item, mode, onMode, onClose, docked, width = 340, children }) {
       const tabs = [['edit', t('editTitle')], ...(item.type === 'architecture' ? [['review', t('reviewTitle')]] : [])];
       return h(
         'div',
         {
           'data-dsh-archify-side-panel': mode,
+          'data-dsh-archify-docked': docked ? 'yes' : 'no',
           style: docked
-            ? { width: 360, flex: 'none', position: 'sticky', top: 0, maxHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column', border: `1px solid ${C.border1}`, borderRadius: 12, background: C.base, overflow: 'hidden' }
+            ? { width, flex: 'none', position: 'sticky', top: 0, maxHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column', border: `1px solid ${C.border1}`, borderRadius: 12, background: C.base, overflow: 'hidden' }
             : { height: '100%', display: 'flex', flexDirection: 'column', background: C.base },
         },
         h(
@@ -1301,60 +1391,94 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The "?" card: what can be done and where, each item a step away. It replaces a page of
-     * prompts to copy, which mostly needed a diagram or an answer that a new conversation lacks.
+     * The "How to use" card: what can be done, each a name, a line and a button that says what it leads to.
+     * Only a prompt that works in any conversation is offered to copy; the others say where to say them.
      */
-    function QuickHelp({ t, onGo, onClose }) {
-      const [copied, setCopied] = useState(false);
+    function QuickHelp({ t, onGo, onClose, edit, review, view }) {
+      const [copied, setCopied] = useState('');
       useEffect(() => {
         const onKey = (e) => {
           if (e.key === 'Escape') onClose();
         };
+        // A press anywhere else closes it; a click into a drawing (an iframe) shows only as the window's blur.
+        const onDown = (e) => {
+          const el = e?.target;
+          if (typeof el?.closest === 'function' && el.closest('[data-dsh-archify-quick-help], [data-dsh-archify-help-open]')) return;
+          onClose();
+        };
+        const onBlur = () =>
+          setTimeout(() => {
+            try {
+              if (document.activeElement?.tagName === 'IFRAME') onClose();
+            } catch {
+              // No document: nothing was clicked.
+            }
+          }, 0);
         try {
           window.addEventListener('keydown', onKey);
+          window.addEventListener('pointerdown', onDown, true);
+          window.addEventListener('blur', onBlur);
         } catch {
           return undefined;
         }
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+          window.removeEventListener('keydown', onKey);
+          window.removeEventListener('pointerdown', onDown, true);
+          window.removeEventListener('blur', onBlur);
+        };
       }, []);
-      const group = (title, rows) =>
+      const go = (key, label, target, extra) => h(Btn, { small: true, onClick: () => onGo(target, extra), 'data-dsh-archify-help-go': key }, label);
+      const copy = (key, value, label) =>
+        h(
+          Btn,
+          {
+            small: true,
+            title: value,
+            onClick: () => {
+              copyText(value);
+              setCopied(key);
+              setTimeout(() => setCopied((k) => (k === key ? '' : k)), 1400);
+            },
+            'data-dsh-archify-help-copy': key,
+          },
+          copied === key ? t('copied') : label,
+        );
+      const row = (key, name, line, action, extra) =>
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-          h('div', { style: { fontSize: 11.5, fontWeight: 650, color: C.faint, letterSpacing: 0.3 } }, title),
-          rows.map(([key, body, action]) =>
-            h(
-              'div',
-              { key, 'data-dsh-archify-help': key, style: { display: 'flex', alignItems: 'flex-start', gap: 10 } },
-              h('div', { style: { flex: 1, minWidth: 0, fontSize: 12.5, color: C.muted, lineHeight: 1.6 } }, body),
-              action ?? null,
-            ),
+          { key, 'data-dsh-archify-help': key, style: { display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0' } },
+          h(
+            'div',
+            { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 } },
+            h('span', { style: { fontSize: 13, fontWeight: 650, color: C.primary } }, name),
+            extra ?? null,
+            h('span', { style: { fontSize: 12, color: C.muted, lineHeight: 1.5 } }, line),
           ),
+          action,
         );
-      const go = (label, target, extra) => h(Btn, { onClick: () => onGo(target, extra), 'data-dsh-archify-help-go': target + (extra?.side ? `:${extra.side}` : extra?.type ? `:${extra.type}` : '') }, label);
-      const rules = '[archify explainer: proactive]';
+      const divider = (key) => h('div', { key, style: { height: 1, background: C.border1, margin: '3px 0' } });
+      const reviewLine = !review
+        ? t('helpReviewNone')
+        : t(review.basis === 'code' ? 'helpReviewCode' : review.basis === 'description' ? 'helpReviewDesign' : 'helpReviewOf', { title: review.item.title });
       return h(
         'div',
-        { 'data-dsh-archify-quick-help': true, role: 'dialog', 'aria-label': t('helpTitle'), style: { position: 'absolute', top: 50, right: 16, width: 420, maxWidth: 'calc(100% - 32px)', maxHeight: 'calc(100% - 70px)', overflowY: 'auto', zIndex: 30, background: C.base, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 14px 40px rgba(0,0,0,.16)', padding: '14px 16px 16px', display: 'flex', flexDirection: 'column', gap: 16 } },
-        h('div', { style: { display: 'flex', alignItems: 'center' } }, h('span', { style: { fontSize: 14, fontWeight: 660, flex: 1 } }, t('helpTitle')), h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }) })),
-        group(t('helpStart'), [
-          ['new', t('helpNew'), go(t('goNew'), 'new')],
-          ['chat', t('helpChat'), null],
-          ['mermaid', t('helpMermaid'), go(t('goNew'), 'new', { mode: 'describe', type: 'auto' })],
-        ]),
-        group(t('helpDrawn'), [
-          ['edit', t('helpEdit'), go(t('goGallery'), 'gallery', { side: 'edit' })],
-          ['review', t('helpReview'), go(t('goGallery'), 'gallery', { side: 'review' })],
-          ['view', t('helpView'), null],
-        ]),
-        group(t('helpExplainer'), [
-          ['explainer', t('helpExplainerHow'), go(t('goNew'), 'new', { mode: 'describe', type: 'explainer' })],
-          [
-            'rules',
-            h('span', null, t('helpRules'), ' ', h('code', { style: { fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2, color: C.primary } }, rules)),
-            h(Btn, { onClick: () => { copyText(rules); setCopied(true); setTimeout(() => setCopied(false), 1400); }, 'data-dsh-archify-help-copy': true }, copied ? t('copied') : t('copyLine')),
-          ],
-        ]),
+        {
+          'data-dsh-archify-quick-help': true,
+          role: 'dialog',
+          'aria-label': t('helpTitle'),
+          style: { position: 'absolute', top: 46, right: 16, width: 420, maxWidth: 'calc(100% - 32px)', maxHeight: 'calc(100% - 62px)', overflowY: 'auto', zIndex: 30, background: C.base, border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: '0 14px 40px rgba(0,0,0,.18)', padding: '8px 14px 8px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' },
+        },
+        h('div', { style: { display: 'flex', alignItems: 'center', padding: '2px 0 4px' } }, h('span', { style: { fontSize: 13.5, fontWeight: 660, flex: 1 } }, t('helpTitle')), h(ToolButton, { onClick: onClose, title: t('close'), icon: h(CloseIcon, { size: 14 }) })),
+        row('new', t('helpNewName'), t('helpNewLine'), go('new', t('helpNewGo'), 'new')),
+        row('mermaid', t('helpMermaidName'), t('helpMermaidLine'), go('new:mermaid', t('helpMermaidGo'), 'new', { mode: 'describe', type: 'auto', aim: 'mermaid' })),
+        row('chat', t('helpChatName'), t('helpChatLine'), copy('chat', t('helpChatExample'), t('helpChatGo'))),
+        divider('d1'),
+        row('edit', t('helpEditName'), edit ? t('helpEditLine', { title: edit.title }) : t('helpEditNone'), edit ? go('gallery:edit', t('helpEditGo'), 'edit') : null),
+        row('review', t('helpReviewName'), reviewLine, review ? go('gallery:review', t('helpReviewGo'), 'review') : go('new:architecture', t('helpReviewDraw'), 'new', { type: 'architecture' })),
+        row('view', t('helpViewName'), t('helpViewLine'), view ? go('view', t('helpViewGo'), 'view') : go('view:example', t('helpViewExample'), 'view')),
+        divider('d2'),
+        row('explainer', t('helpExplainerName'), t('helpExplainerLine'), go('new:explainer', t('helpExplainerGo'), 'new', { mode: 'describe', type: 'explainer' })),
+        row('rules', t('helpRulesName'), t('rulesWhere'), copy('rules', RULES_LINE, t('copyLine')), h('code', { style: { alignSelf: 'flex-start', fontSize: 11.5, padding: '1px 6px', borderRadius: 5, background: C.layer2, color: C.primary } }, RULES_LINE)),
       );
     }
 
@@ -1378,9 +1502,16 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('');
       const [jobs, setJobs] = useState([]);
       const [seed, setSeed] = useState(null);
-      // Beside the drawing: '' (closed), 'edit' or 'review'; and the "?" card.
+      // Beside the drawing: '' (closed), 'edit' or 'review'; and the "How to use" card.
       const [side, setSide] = useState('');
       const [help, setHelp] = useState(false);
+      // An example in full screen, from the card when there is no drawing yet.
+      const [example, setExample] = useState('');
+      // What each architecture's review rests on ('code' or 'description'), asked when the card opens.
+      const [bases, setBases] = useState({});
+      const basisAsks = useRef(new Map());
+      // A row the card selected, to scroll into view in the list.
+      const reveal = useRef('');
       const [, setTick] = useState(0);
       const alive = useRef(true);
       const itemsRef = useRef(items);
@@ -1544,25 +1675,69 @@ window.__ModuleLoader__.load({
         setJobs((list) => (list ?? []).filter((j) => j.id !== job.id));
         void postJson(DISMISS_ROUTE, { id: job.id }).catch(() => {});
       };
+      // Every way into New lands with the caret in "What to draw".
       const use = (fill) => {
-        setSeed({ ...fill, at: Date.now() });
+        setSeed({ aim: 'draw', ...fill, at: Date.now() });
         setTab('new');
       };
-      // From the "?" card to where a thing is done.
-      const go = (target, extra) => {
-        setHelp(false);
-        if (target === 'new') {
-          if (extra) use(extra);
-          else setTab('new');
-          return;
+
+      // Where the card's buttons lead, from what is there now.
+      const all = items ?? [];
+      const usable = (i) => Boolean(i) && !i.missing;
+      const editTarget = usable(current) ? current : all.find(usable) ?? null;
+      const archs = all.filter((i) => i.type === 'architecture' && !i.missing);
+      const basisKey = (i) => `${i.id}:${i.version}`;
+      const basisOf = (i) => {
+        const key = basisKey(i);
+        let ask = basisAsks.current.get(key);
+        if (!ask) {
+          ask = getJson(`${REVIEW_ROUTE}?id=${encodeURIComponent(i.id)}`).then(
+            (r) => (r?.supported ? String(r.basis ?? '') : ''),
+            () => '',
+          );
+          void ask.then((b) => alive.current && setBases((m) => (m[key] === b ? m : { ...m, [key]: b })));
+          basisAsks.current.set(key, ask);
         }
+        return ask;
+      };
+      // Review keeps the selection when it is an architecture; else one drawn from code, else the first.
+      const reviewPick = (known) => (current?.type === 'architecture' && !current.missing ? current : archs.find((a) => known[basisKey(a)] === 'code') ?? archs[0] ?? null);
+      const reviewTarget = reviewPick(bases);
+      useEffect(() => {
+        if (help) for (const a of archs) void basisOf(a);
+        return undefined;
+      }, [help, archs.map(basisKey).join(' ')]);
+
+      const showSide = (id, mode) => {
         setTab('gallery');
         setQuery('');
-        if (extra?.side === 'review') {
-          const arch = (itemsRef.current ?? []).find((i) => i.type === 'architecture' && !i.missing);
-          if (arch) setSelected(arch.id);
+        setSelected(id);
+        reveal.current = id;
+        setSide(mode);
+      };
+      // From the card to where a thing is done.
+      const go = (target, extra) => {
+        setHelp(false);
+        if (target === 'new') return void use(extra ?? {});
+        if (target === 'edit') {
+          if (editTarget) showSide(editTarget.id, 'edit');
+          return;
         }
-        if (extra?.side) setSide(extra.side);
+        if (target === 'review') {
+          if (reviewTarget && reviewTarget === current) return void showSide(current.id, 'review');
+          // Which architectures have code behind them was asked when the card opened.
+          void Promise.all(archs.map(basisOf)).then((answers) => {
+            const it = reviewPick(Object.fromEntries(archs.map((a, at) => [basisKey(a), answers[at]])));
+            if (it && alive.current) showSide(it.id, 'review');
+          });
+          return;
+        }
+        if (target === 'view') {
+          if (!editTarget) return void setExample('architecture');
+          setQuery('');
+          setSelected(editTarget.id);
+          setFull(true);
+        }
       };
 
       const tabButton = (key, label) =>
@@ -1597,8 +1772,16 @@ window.__ModuleLoader__.load({
           : null,
         h(
           'button',
-          { type: 'button', 'data-dsh-archify-help-open': true, title: t('helpTitle'), 'aria-label': t('helpTitle'), onClick: () => setHelp((v) => !v), style: { width: 28, height: 28, borderRadius: 14, font: 'inherit', fontSize: 13, fontWeight: 650, color: help ? C.primary : C.muted, background: help ? C.hover : 'transparent', border: `1px solid ${C.border1}`, cursor: 'pointer' } },
-          '?',
+          {
+            type: 'button',
+            'data-dsh-archify-help-open': true,
+            title: t('helpTitle'),
+            'aria-expanded': help,
+            onClick: () => setHelp((v) => !v),
+            style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 8, font: 'inherit', fontSize: 12.5, fontWeight: 560, color: help ? C.primary : C.muted, background: help ? C.hover : 'transparent', border: `1px solid ${C.border1}`, cursor: 'pointer', whiteSpace: 'nowrap' },
+          },
+          h(HelpIcon, { size: 14 }),
+          t('helpOpen'),
         ),
       );
 
@@ -1616,9 +1799,9 @@ window.__ModuleLoader__.load({
             'div',
             { 'data-dsh-archify-empty-ways': true, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
             [
-              ['new', t('emptyNew'), h(Btn, { kind: 'primary', onClick: () => setTab('new') }, t('goNew'))],
+              ['new', t('emptyNew'), h(Btn, { kind: 'primary', onClick: () => use({}) }, t('helpNewGo'))],
               ['chat', t('emptyChat'), null],
-              ['mermaid', t('emptyMermaid'), h(Btn, { onClick: () => use({ mode: 'describe', type: 'auto' }) }, t('goNew'))],
+              ['mermaid', t('emptyMermaid'), h(Btn, { onClick: () => use({ mode: 'describe', type: 'auto', aim: 'mermaid' }) }, t('helpMermaidGo'))],
             ].map(([key, words, action]) => h('div', { key, style: { display: 'flex', gap: 12, alignItems: 'center', padding: '10px 12px', borderRadius: 10, background: C.layer1, border: `1px solid ${C.border1}` } }, h('span', { style: { flex: 1, fontSize: 12.5, lineHeight: 1.6 } }, words), action)),
           ),
           h(
@@ -1631,6 +1814,14 @@ window.__ModuleLoader__.load({
           h(Jobs, { t, jobs, env, onShowPage: showPage, onDismiss: dismissJob }),
         );
       else {
+        // What the side panel shows: a review only for an architecture.
+        const sideMode = current && side === 'review' && current.type !== 'architecture' ? 'edit' : side;
+        const sideOpen = Boolean(sideMode) && Boolean(current) && !current.missing;
+        // With Edit or Review open the list narrows, so the drawing keeps room beside the panel.
+        const listW = sideOpen ? (wide ? 220 : 184) : wide ? 300 : 240;
+        const sideW = paneW >= 900 ? 340 : 300;
+        // Docked beside the drawing while it keeps a usable width; over it only when there is no room.
+        const besides = sideOpen && paneW - 34 - sideW - 16 >= 300;
         const list = h(
           'div',
           {
@@ -1639,7 +1830,7 @@ window.__ModuleLoader__.load({
               const el = e.currentTarget;
               if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadMore();
             },
-            style: { width: wide ? 300 : 240, flex: 'none', overflowY: 'auto', borderRight: `1px solid ${C.border1}`, padding: '8px 8px 40px' },
+            style: { width: listW, flex: 'none', overflowY: 'auto', borderRight: `1px solid ${C.border1}`, padding: '8px 8px 40px' },
           },
           shown.map((item) => {
             const on = current && item.id === current.id;
@@ -1647,6 +1838,19 @@ window.__ModuleLoader__.load({
               'div',
               {
                 key: item.id,
+                // The row the card chose comes into view.
+                ref:
+                  reveal.current === item.id
+                    ? (el) => {
+                        if (!el || reveal.current !== item.id) return;
+                        reveal.current = '';
+                        try {
+                          el.scrollIntoView({ block: 'nearest' });
+                        } catch {
+                          // Scrolling is a convenience.
+                        }
+                      }
+                    : undefined,
                 role: 'button',
                 tabIndex: 0,
                 'data-dsh-archify-item': item.id,
@@ -1674,12 +1878,10 @@ window.__ModuleLoader__.load({
             );
           }),
         );
-        // What the side panel shows: a review only for an architecture.
-        const sideMode = current && side === 'review' && current.type !== 'architecture' ? 'edit' : side;
         const sidePanel = (docked) =>
           h(
             SidePanel,
-            { t, item: current, mode: sideMode, onMode: setSide, onClose: () => setSide(''), docked },
+            { t, item: current, mode: sideMode, onMode: setSide, onClose: () => setSide(''), docked, width: sideW },
             sideMode === 'review' ? h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, data: reviewData }) : h(EditBox, { t, item: current, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob }),
           );
         const preview = current
@@ -1703,21 +1905,20 @@ window.__ModuleLoader__.load({
                 { ref: pane, style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 } },
                 jobs.some(live) ? h('div', { style: { marginBottom: 12 } }, h(Jobs, { t, jobs: jobs.filter(live), env, onShowPage: showPage, onDismiss: dismissJob })) : null,
                 (() => {
-                  const besides = Boolean(sideMode) && !current.missing && paneW >= 1100;
                   const drawing = h(
                     'div',
                     { style: { flex: 1, minWidth: 0 } },
                     current.missing
                       ? h('div', { style: { color: C.faint, padding: 12 } }, t('missingLong', { path: current.path }))
-                      : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? 356 : 0), title: current.title })),
+                      : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? sideW + 16 : 0), title: current.title })),
                     h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
                   );
                   if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, sidePanel(true));
                   return drawing;
                 })(),
               ),
-              // A narrower pane: the side panel slides over the right of the drawing.
-              sideMode && !current.missing && !(paneW >= 1100)
+              // No room beside it: the side panel slides over the right of the drawing.
+              sideOpen && !besides
                 ? h('div', { 'data-dsh-archify-side-sheet': current.id, style: { position: 'absolute', top: 45, right: 0, bottom: 0, width: Math.min(420, Math.max(300, Math.round(paneW * 0.5))), borderLeft: `1px solid ${C.border1}`, boxShadow: '-12px 0 28px rgba(0,0,0,.10)', zIndex: 5 } }, sidePanel(false))
                 : null,
             )
@@ -1732,7 +1933,17 @@ window.__ModuleLoader__.load({
         header,
         body,
         full && current ? h(FullScreen, { t, item: current, onClose: () => setFull(false), onOpenSession: openSession }) : null,
-        help ? h(QuickHelp, { t, onGo: go, onClose: () => setHelp(false) }) : null,
+        example ? h(FullScreen, { t, item: exampleItem(t, example), onClose: () => setExample('') }) : null,
+        help
+          ? h(QuickHelp, {
+              t,
+              onGo: go,
+              onClose: () => setHelp(false),
+              edit: editTarget,
+              review: reviewTarget ? { item: reviewTarget, basis: bases[basisKey(reviewTarget)] ?? '' } : null,
+              view: editTarget,
+            })
+          : null,
       );
     }
 
@@ -1883,19 +2094,38 @@ window.__ModuleLoader__.load({
         "reviewInPanel": "Review this architecture (Archify panel)",
         "scanned": "scanned {root}",
         "helpTitle": "How to use Archify",
-        "helpStart": "START A DIAGRAM",
-        "helpDrawn": "A DIAGRAM YOU HAVE",
-        "helpExplainer": "ONE-PAGE EXPLAINERS",
-        "helpNew": "In New, pick a type and describe it; pick a project folder to draw from its code.",
-        "helpChat": "Or ask in any conversation: \"draw the architecture of this repo\" (in a conversation opened in the project), \"draw this as a sequence diagram: …\". The page appears in the conversation and here.",
-        "helpMermaid": "Have Mermaid? Paste it into New's \"What to draw\" with no project, and it is drawn afresh from its meaning.",
-        "helpEdit": "Change it: in the Gallery, select it and open Edit. Say what to change (layout, style, language, splitting or merging parts, a before/after page); the conversation that drew it does it, and the page updates.",
-        "helpReview": "Review an architecture: the model reads the code and cites the lines each point rests on.",
-        "helpView": "Read it full screen: ? lists the shortcuts, a click on a part shows what goes in and out, the menu exports PNG, SVG or WebM.",
-        "helpExplainerHow": "In a conversation, after an answer, say \"make the answer above a one-page explainer\"; or pick One-page explainer in New and describe the subject.",
-        "helpRules": "For pages without asking, add this line to your rules:",
-        "goNew": "Go to New",
-        "goGallery": "Go to the Gallery",
+        "helpOpen": "How to use",
+        "helpNewName": "A new diagram",
+        "helpNewLine": "Say what to draw; pick a project folder to draw from its code",
+        "helpNewGo": "Start a diagram",
+        "helpMermaidName": "From Mermaid",
+        "helpMermaidLine": "Paste it into What to draw; it is redrawn from its meaning",
+        "helpMermaidGo": "Paste Mermaid",
+        "helpChatName": "In a conversation",
+        "helpChatLine": "The example works anywhere; for a repository, ask in a conversation opened in it",
+        "helpChatGo": "Copy an example",
+        "helpChatExample": "Use Archify to draw a sequence diagram: signing in to a website by scanning a QR code with the phone app, with the calls between the web page, the app and the server.",
+        "helpEditName": "Change a drawing",
+        "helpEditLine": "“{title}”: say what to change; the conversation that drew it does it",
+        "helpEditNone": "Nothing drawn yet",
+        "helpEditGo": "Edit a diagram",
+        "helpReviewName": "Architecture review",
+        "helpReviewCode": "“{title}”: the model reads its code; every point cites the lines",
+        "helpReviewDesign": "“{title}” was drawn from a description: the review is of its design",
+        "helpReviewOf": "“{title}”: every point cites what it rests on",
+        "helpReviewNone": "No architecture diagram yet: draw one first",
+        "helpReviewGo": "Review it",
+        "helpReviewDraw": "Draw one",
+        "helpViewName": "Read it full screen",
+        "helpViewLine": "In full screen, press the ? key for shortcuts; click a part for what goes in and out",
+        "helpViewGo": "Full screen",
+        "helpViewExample": "See an example",
+        "helpExplainerName": "One-page explainer",
+        "helpExplainerLine": "Write the subject; or, after an answer in a conversation, say \"make that a page\"",
+        "helpExplainerGo": "Make an explainer",
+        "helpRulesName": "Explainers without asking",
+        "rulesWhy": "For pages without asking:",
+        "rulesWhere": "Add this line to ~/.dsh/AGENTS.md (every conversation) or to AGENTS.md at a project's root (that project only); new conversations follow it.",
         "copyLine": "Copy the line",
         "editTitle": "Edit",
         "editOpenHint": "Change this diagram, through the conversation that drew it",
@@ -1903,10 +2133,11 @@ window.__ModuleLoader__.load({
         "editPlaceholder": "e.g. Split the payment service into payments and reconciliation",
         "editSend": "Send to its conversation",
         "editNote": "Suggestions with … need your words where the dots are.",
-        "fullscreenTip": "Press ? for the shortcuts · click a part to see what goes in and out · pick two parts for the route between them · the menu at the top right exports",
+        "editFillBlank": "Replace the … with your words first",
+        "fullscreenTip": "Press the ? key for the shortcuts · click a part to see what goes in and out · pick two parts for the route between them · the menu at the top right exports",
         "emptyTitle": "No diagrams yet. Three ways to start:",
         "emptyNew": "In New: pick a type, and a project folder to draw from its code or a description.",
-        "emptyChat": "In any conversation: \"draw the architecture of this repo\", \"画一下下单的时序图\", \"make this answer a one-page explainer\".",
+        "emptyChat": "In a conversation: \"draw the checkout as a sequence diagram\" works anywhere; \"draw the architecture of this repo\" in a conversation opened in that repository; \"make that a page\" after an answer.",
         "emptyMermaid": "Paste Mermaid into New and it is drawn afresh.",
         "reviewHowCode": "No review yet. The model reads the code of {repo} and reviews the architecture as it is built: what kind of software it is, then only what matters for that kind. Every point cites the files and lines it rests on, and the plugin checks those citations before it keeps the review. About one to three minutes.",
         "reviewHowDesign": "No review yet. This diagram was drawn from a description, with no code behind it, so the review is of the design it shows: every point names the components it is about, and nothing beyond the diagram is assumed.",
@@ -1924,6 +2155,9 @@ window.__ModuleLoader__.load({
         "clearFolder": "Clear",
         "clearFolderHint": "Draw from the description only",
         "runFromCode": "The model reads the code of {name} (the plugin scans it first), cites the files it is drawn from and pins the commit. About one to two minutes. Leave the box empty for the whole picture.",
+        "mermaidHint": "Paste the Mermaid into this box; it is redrawn from its meaning, no project needed.",
+        "mermaidPlaceholder": "Paste Mermaid here, e.g.\ngraph LR\n  App --> API --> DB",
+        "autoPlaceholder": "Say what to draw, or paste Mermaid",
         "runFromText": "Only what you write is drawn; no file is read, so it can be any system, a plan, or something that is not software. Mermaid can be pasted as is. About half a minute.",
         "needSomething": "Pick a project folder, or write what to draw.",
         "folderMissing": "There is no folder at this path.",
@@ -2082,19 +2316,38 @@ window.__ModuleLoader__.load({
         "reviewInPanel": "点评这张架构图（Archify 面板）",
         "scanned": "已扫描 {root}",
         "helpTitle": "怎么用 Archify",
-        "helpStart": "开始画一张图",
-        "helpDrawn": "对已经画好的图",
-        "helpExplainer": "一页讲解页",
-        "helpNew": "在「新建」里选类型、写要画什么；选一个项目文件夹，就从它的代码画。",
-        "helpChat": "也可以在任何会话里直接说：「画一下这个仓库的架构图」（在打开了项目的会话里）、「把下面这段画成时序图：……」。画好的页面出现在对话里，也收进这里。",
-        "helpMermaid": "有 Mermaid？在「新建」里不选项目，把它贴进「要画什么」，会按它的意思重画。",
-        "helpEdit": "改图：在图库选中它，点「改图」，说要改什么（布局、风格、语言、拆分合并组件、改造前后对比）。画它的那个会话去改，改好这里自动更新。",
-        "helpReview": "点评架构：模型读代码评审，每条结论都附依据的代码位置。",
-        "helpView": "全屏看图：按 ? 看快捷键，点组件看上下游，右上角菜单导出 PNG、SVG、WebM。",
-        "helpExplainerHow": "在会话里得到回答后，说「把上面的回答做成一页」；或者在「新建」里选「讲解页」，写下主题。",
-        "helpRules": "想让模型在合适的时候自动出页，在你的规则里加一行：",
-        "goNew": "去「新建」",
-        "goGallery": "去图库",
+        "helpOpen": "怎么用",
+        "helpNewName": "画一张新图",
+        "helpNewLine": "写要画什么；选了项目文件夹就读代码画",
+        "helpNewGo": "新建一张图",
+        "helpMermaidName": "从 Mermaid 画",
+        "helpMermaidLine": "贴进「要画什么」，按它的意思重画",
+        "helpMermaidGo": "贴 Mermaid",
+        "helpChatName": "在会话里画",
+        "helpChatLine": "例句哪个会话都能用；画仓库要在该项目的会话里说",
+        "helpChatGo": "复制例句",
+        "helpChatExample": "用 Archify 画一张时序图：用手机 App 扫码登录网页时，网页、App 和服务端之间的调用和返回。",
+        "helpEditName": "改已画的图",
+        "helpEditLine": "「{title}」：说要改什么，画它的会话去改",
+        "helpEditNone": "还没有画好的图",
+        "helpEditGo": "改一张图",
+        "helpReviewName": "架构点评",
+        "helpReviewCode": "「{title}」：读代码点评，每条附出处",
+        "helpReviewDesign": "「{title}」是按描述画的，只能点评设计",
+        "helpReviewOf": "「{title}」：每条结论都附依据",
+        "helpReviewNone": "还没有架构图，先画一张",
+        "helpReviewGo": "点评架构",
+        "helpReviewDraw": "画架构图",
+        "helpViewName": "全屏看图",
+        "helpViewLine": "全屏后按键盘上的 ? 看快捷键；点组件看上下游",
+        "helpViewGo": "全屏打开",
+        "helpViewExample": "看示例",
+        "helpExplainerName": "一页讲解页",
+        "helpExplainerLine": "写个主题；或在会话里有了回答后说「做成一页」",
+        "helpExplainerGo": "做讲解页",
+        "helpRulesName": "让模型主动出讲解页",
+        "rulesWhy": "想让模型在合适的时候主动出讲解页：",
+        "rulesWhere": "把这行加进 ~/.dsh/AGENTS.md（对所有会话）或项目根目录的 AGENTS.md（只对这个项目），新开的会话生效。",
         "copyLine": "复制这行",
         "editTitle": "改图",
         "editOpenHint": "改这张图：交给画它的那个会话去改",
@@ -2102,10 +2355,11 @@ window.__ModuleLoader__.load({
         "editPlaceholder": "比如：把支付服务拆成支付和对账两个服务",
         "editSend": "发给画它的会话",
         "editNote": "带「……」的建议需要你把省略的部分补上。",
-        "fullscreenTip": "按 ? 看快捷键 · 点组件看上下游 · 选两个组件看它们之间的路径 · 右上角菜单可以导出",
+        "editFillBlank": "先把「……」换成你的内容",
+        "fullscreenTip": "按键盘上的 ? 看快捷键 · 点组件看上下游 · 选两个组件看它们之间的路径 · 右上角菜单可以导出",
         "emptyTitle": "还没有图。三种开始方式：",
         "emptyNew": "在「新建」里：选图的类型；想从代码画就选项目文件夹，否则写下要画什么。",
-        "emptyChat": "在任何会话里直接说：「画一下这个仓库的架构图」「画一下下单的时序图」「把这个回答做成一页」。",
+        "emptyChat": "在会话里说：「画一下下单的时序图」哪个会话都行；「画一下这个仓库的架构图」要在打开了该项目的会话里说；「做成一页」在得到回答之后说。",
         "emptyMermaid": "有 Mermaid？贴进「新建」，会按它的意思重画。",
         "reviewHowCode": "还没有点评。点评由模型读 {repo} 的代码完成：先弄清它是什么软件、怎么运行，再只评这类软件真正重要的方面。每条结论都附上依据的文件和行号，插件核对这些位置确实存在后才保存。大约 1–3 分钟。",
         "reviewHowDesign": "还没有点评。这张图是按描述画的，没有代码，所以点评针对的是图里的设计：每条结论都指明涉及哪些组件，不假设图以外的事实。",
@@ -2123,6 +2377,9 @@ window.__ModuleLoader__.load({
         "clearFolder": "清除",
         "clearFolderHint": "不用项目，只按描述画",
         "runFromCode": "模型会读 {name} 的代码（插件先扫描一遍），图里标出依据的源码并固定在当前提交上。大约 1–2 分钟。留空就画整体结构。",
+        "mermaidHint": "把 Mermaid 贴进下面这个框，不用选项目，按它的意思重画。",
+        "mermaidPlaceholder": "在这里贴 Mermaid，例如：\ngraph LR\n  App --> API --> DB",
+        "autoPlaceholder": "写下要画什么，或者直接贴 Mermaid",
         "runFromText": "只画你写的内容，不读任何文件：可以是任何系统、一个方案，甚至不是软件的东西；也可以直接贴 Mermaid。大约半分钟。",
         "needSomething": "选一个项目文件夹，或者写下要画什么。",
         "folderMissing": "这个路径下没有文件夹。",
