@@ -39,6 +39,17 @@ For the latest unreleased code, use the Git spec `git+https://github.com/kadalia
 Refresh the page once after installing. There is nothing to configure: no Node.js install, no
 key, no model of its own. Archify runs with the Harness's own JavaScript runtime.
 
+## Updates
+
+About 20 seconds after the page opens, and every six hours after that, the plugin checks for a newer
+version through Harness's own plugin manager. It is the same check as the Versions section in
+**Plugins**, and it asks the npm registry only about `@kadaliao/dsh-*` package names. A new version
+shows up as a card in the bottom-right corner. **Update** has Harness install it, after checking that
+it works with your Harness; if the install fails, the version you had is put back. **Later** hides the
+card for a day, **Skip this version** until the next one. With several of these plugins installed, one
+card covers all of them, including copies too old to check for themselves. Copies installed from a
+folder or from Git are not checked.
+
 ## How to use it
 
 **Ask in a conversation.** "Draw the architecture of this repo", "draw this as a sequence diagram: …", "make the
