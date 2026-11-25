@@ -322,7 +322,9 @@ function panelHarness(routes, services = {}) {
   const t = (key, params) => (dict[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => String(params?.[k] ?? ''));
   const render = () => {
     hooks.rerender();
-    return Panel({ t });
+    // The panel's own root, inside the update reminder's frame (shared/updates.js).
+    const tree = Panel({ t });
+    return tree?.props?.['data-kadaliao-update-frame'] ? tree.children.at(-1).children[0] : tree;
   };
   return { calls, render, seen };
 }
