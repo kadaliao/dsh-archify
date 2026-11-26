@@ -812,6 +812,11 @@ test('Edit sits beside the drawing while the drawing keeps a usable width, over 
     findAll(tree, (n) => n.props?.ref && n.props.style?.padding === 16 && n.props.style?.overflow === 'auto')[0].props.ref.current = { clientWidth: width };
     tree = render();
     tree = render();
+    // The stage is what the pane's padding and a docked panel leave of it.
+    const docked = by(tree, 'data-dsh-archify-side-panel')[0]?.props['data-dsh-archify-docked'] === 'yes';
+    by(tree, 'data-dsh-archify-stage', 'w1')[0].props.ref.current = { clientWidth: width - 32 - (docked ? 300 + 16 : 0), clientHeight: 640 };
+    tree = render();
+    tree = render();
   };
   // A 1180px window: the pane is about 716px once the list narrows. Docked, the drawing refit beside it.
   paneAt(716);
@@ -827,4 +832,43 @@ test('Edit sits beside the drawing while the drawing keeps a usable width, over 
   by(tree, 'data-dsh-archify-side-close')[0].props.onClick(ev);
   tree = render();
   assert.equal(by(tree, 'data-dsh-archify-list')[0].props.style.width, 240);
+});
+
+test('the gallery drawing takes the pane\'s height: an explainer fills it, a drawing is fitted whole within it', async () => {
+  const at = Date.now();
+  const items = [
+    { id: 'e1', type: 'explainer', title: 'How it works', path: '/w/e.html', folder: '/w/.archify/e', version: 'v1', updatedAt: at },
+    { id: 't1', type: 'workflow', title: 'Tall', path: '/w/t.html', folder: '/w/.archify/t', version: 'v1', aspect: 1.5, updatedAt: at - 1 },
+    { id: 'w1', type: 'architecture', title: 'Wide', path: '/w/w.html', folder: '/w/.archify/w', version: 'v1', aspect: 0.5, updatedAt: at - 2 },
+  ];
+  const { render } = panelHarness({ '/__dsh_archify/list': { items, total: 3, hasMore: false } });
+  let tree = render();
+  await flush();
+  tree = render();
+  const show = (id) => {
+    by(tree, 'data-dsh-archify-item', id)[0].props.onClick(ev);
+    tree = render();
+    const stage = by(tree, 'data-dsh-archify-stage', id)[0];
+    stage.props.ref.current = { clientWidth: 900, clientHeight: 900 };
+    // The path under the drawing: one line.
+    stage.children.at(-1).props.ref.current = { offsetHeight: 17 };
+    tree = render();
+    tree = render();
+    const frame = findAll(tree, (n) => n.type === 'iframe')[0];
+    const [holder] = findAll(tree, (n) => (n.children ?? []).includes(frame));
+    return { frame, holder };
+  };
+  // The explainer's frame is the stage, however tall the pane.
+  const explainer = show('e1');
+  assert.equal(explainer.frame.props.style.height, '100%');
+  assert.equal(explainer.holder.props.style.flex, '1 1 0');
+  // A tall drawing uses the pane's height (900 less the path line and the border), past the chat card's cap.
+  const tall = show('t1');
+  const room = 900 - 17 - 8 - 2;
+  assert.ok(tall.frame.props.style.height > 720 && tall.frame.props.style.height <= room, String(tall.frame.props.style.height));
+  assert.ok(tall.holder.props.style.width < 898, String(tall.holder.props.style.width));
+  // A wide one fills the width, whole.
+  const wide = show('w1');
+  assert.equal(wide.holder.props.style.width, 898);
+  assert.equal(wide.frame.props.style.height, Math.round((898 - 16) * 0.5 + 20));
 });

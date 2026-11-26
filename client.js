@@ -264,27 +264,29 @@ window.__ModuleLoader__.load({
 
     /** Tallest inline preview; a taller drawing is shown narrower, whole. */
     const PREVIEW_MAX = 720;
+    /** The gallery's drawing fills the pane's height, down to this; a shorter pane scrolls. */
+    const STAGE_MIN = 360;
     /** The embed's padding on each side of the drawing (Archify's 0.5rem), and slack below it. */
     const EMBED_PAD = 8;
     const EMBED_SLACK = 4;
 
     /**
-     * Size of the inline preview in a box `width` wide. The embed fits the
-     * drawing to its width, so a drawing too tall for the box gets a narrower
-     * frame instead of losing its bottom.
+     * Size of the inline preview in a box `width` wide and at most `room` tall.
+     * The embed fits the drawing to its width, so a drawing too tall for the box
+     * gets a narrower frame instead of losing its bottom.
      */
-    function previewBox(item, width) {
+    function previewBox(item, width, room = PREVIEW_MAX) {
       const w = Math.max(280, width || 680);
       if (item.type === 'explainer' || !(item.aspect > 0)) return { width: w, height: Math.round(Math.min(620, Math.max(420, w * 0.72))) };
       // The drawing is the frame's width less the side padding, scaled by its aspect.
       const extra = 2 * EMBED_PAD + EMBED_SLACK;
-      const fit = Math.min(w, Math.floor((PREVIEW_MAX - extra) / item.aspect + 2 * EMBED_PAD));
+      const fit = Math.min(w, Math.floor((room - extra) / item.aspect + 2 * EMBED_PAD));
       return { width: fit, height: Math.round(Math.max(220, (fit - 2 * EMBED_PAD) * item.aspect + extra)) };
     }
 
     /** The preview frame, centered in its box when narrower. */
-    function FittedFrame({ item, width, title }) {
-      const box = previewBox(item, width);
+    function FittedFrame({ item, width, room, title }) {
+      const box = previewBox(item, width, room);
       return h(
         'div',
         { style: { display: 'flex', justifyContent: 'center' } },
@@ -1382,7 +1384,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Beside a drawing: changing it, and (for an architecture) its review; docked when the drawing still fits beside it, over the drawing when not. */
-    function SidePanel({ t, item, mode, onMode, onClose, docked, width = 340, children }) {
+    function SidePanel({ t, item, mode, onMode, onClose, docked, width = 340, height, children }) {
       const tabs = [['edit', t('editTitle')], ...(item.type === 'architecture' ? [['review', t('reviewTitle')]] : [])];
       return h(
         'div',
@@ -1390,7 +1392,7 @@ window.__ModuleLoader__.load({
           'data-dsh-archify-side-panel': mode,
           'data-dsh-archify-docked': docked ? 'yes' : 'no',
           style: docked
-            ? { width, flex: 'none', position: 'sticky', top: 0, maxHeight: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column', border: `1px solid ${C.border1}`, borderRadius: 12, background: C.base, overflow: 'hidden' }
+            ? { width, flex: 'none', alignSelf: 'flex-start', position: 'sticky', top: 0, ...(height > 0 ? { height } : { maxHeight: 'calc(100vh - 150px)' }), display: 'flex', flexDirection: 'column', border: `1px solid ${C.border1}`, borderRadius: 12, background: C.base, overflow: 'hidden', boxSizing: 'border-box' }
             : { height: '100%', display: 'flex', flexDirection: 'column', background: C.base },
         },
         h(
@@ -1645,6 +1647,37 @@ window.__ModuleLoader__.load({
         return () => ro.disconnect();
       }, [items === null, tab]);
 
+      // The room the gallery's drawing has: the stage's width, and its height less the path below it.
+      const stage = useRef(null);
+      const pathLine = useRef(null);
+      const [room, setRoom] = useState({ width: 0, height: 0 });
+      const roomWatch = useRef({ els: [], ro: null });
+      useEffect(() => {
+        // Both are there only with a page selected: follow them whenever they change.
+        const w = roomWatch.current;
+        const els = [stage.current, pathLine.current];
+        if (els[0] === w.els[0] && els[1] === w.els[1]) return undefined;
+        w.ro?.disconnect();
+        w.ro = null;
+        w.els = els;
+        const [box, line] = els;
+        if (!box) return undefined;
+        // Exact heights: the path line is often a fraction of a pixel, and the docked panel lines up with the drawing.
+        const tall = (el) => (typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect().height : el.clientHeight || el.offsetHeight || 0);
+        const read = () => {
+          const width = box.clientWidth || 0;
+          const height = Math.max(0, tall(box) - (line ? tall(line) + 8 : 0));
+          setRoom((r) => (r.width === width && r.height === height ? r : { width, height }));
+        };
+        read();
+        if (typeof ResizeObserver === 'function') {
+          w.ro = new ResizeObserver(read);
+          for (const el of els) if (el) w.ro.observe(el);
+        }
+        return undefined;
+      });
+      useEffect(() => () => roomWatch.current.ro?.disconnect(), []);
+
       // The first view: the gallery when there is something in it, else New.
       const view = tab || (items !== null && items.length === 0 ? 'new' : 'gallery');
 
@@ -1838,6 +1871,9 @@ window.__ModuleLoader__.load({
         const sideW = paneW >= 900 ? 340 : 300;
         // Docked beside the drawing while it keeps a usable width; over it only when there is no room.
         const besides = sideOpen && paneW - 34 - sideW - 16 >= 300;
+        // A page without a known shape (an explainer, an older drawing) fills the stage; a drawing is fitted whole.
+        const fills = Boolean(current) && (current.type === 'explainer' || !(current.aspect > 0));
+        const cardStyle = { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 };
         const list = h(
           'div',
           {
@@ -1897,7 +1933,8 @@ window.__ModuleLoader__.load({
         const sidePanel = (docked) =>
           h(
             SidePanel,
-            { t, item: current, mode: sideMode, onMode: setSide, onClose: () => setSide(''), docked, width: sideW },
+            // Docked, it ends where the drawing's room does.
+            { t, item: current, mode: sideMode, onMode: setSide, onClose: () => setSide(''), docked, width: sideW, height: docked ? room.height : 0 },
             sideMode === 'review' ? h(ReviewBox, { t, item: current, env, jobs, onJob: addJob, data: reviewData }) : h(EditBox, { t, item: current, env, jobs, onJob: addJob, onShowPage: showPage, onDismiss: dismissJob }),
           );
         const preview = current
@@ -1918,20 +1955,27 @@ window.__ModuleLoader__.load({
               ),
               h(
                 'div',
-                { ref: pane, style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 } },
-                jobs.some(live) ? h('div', { style: { marginBottom: 12 } }, h(Jobs, { t, jobs: jobs.filter(live), env, onShowPage: showPage, onDismiss: dismissJob })) : null,
-                (() => {
-                  const drawing = h(
+                { ref: pane, style: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column' } },
+                jobs.some(live) ? h('div', { style: { flex: 'none', marginBottom: 12 } }, h(Jobs, { t, jobs: jobs.filter(live), env, onShowPage: showPage, onDismiss: dismissJob })) : null,
+                // The drawing takes the rest of the pane's height, the docked side panel beside it.
+                h(
+                  'div',
+                  { style: { flex: '1 1 0', minHeight: STAGE_MIN, display: 'flex', gap: 16 } },
+                  h(
                     'div',
-                    { style: { flex: 1, minWidth: 0 } },
+                    { ref: stage, 'data-dsh-archify-stage': current.id, style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' } },
                     current.missing
                       ? h('div', { style: { color: C.faint, padding: 12 } }, t('missingLong', { path: current.path }))
-                      : h('div', { style: { border: `1px solid ${C.border1}`, borderRadius: 12, overflow: 'hidden', background: C.layer1 } }, h(FittedFrame, { item: current, width: paneW - 34 - (besides ? sideW + 16 : 0), title: current.title })),
-                    h('div', { style: { marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
-                  );
-                  if (besides) return h('div', { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } }, drawing, sidePanel(true));
-                  return drawing;
-                })(),
+                      : fills
+                        ? // An explainer scrolls inside its frame: the frame is the whole stage.
+                          h('div', { style: { ...cardStyle, flex: '1 1 0', minHeight: 0 } }, h(PageFrame, { item: current, title: current.title }))
+                        : room.width > 0
+                          ? h('div', { style: { ...cardStyle, flex: 'none' } }, h(FittedFrame, { item: current, width: room.width - 2, room: room.height - 2, title: current.title }))
+                          : null,
+                    h('div', { ref: pathLine, style: { flex: 'none', marginTop: 8, fontSize: 11.5, color: C.faint, wordBreak: 'break-all', userSelect: 'text' } }, current.path),
+                  ),
+                  besides ? sidePanel(true) : null,
+                ),
               ),
               // No room beside it: the side panel slides over the right of the drawing.
               sideOpen && !besides
