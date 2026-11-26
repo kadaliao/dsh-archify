@@ -795,7 +795,7 @@ window.__ModuleLoader__.load({
             fontSize: small ? 12 : SMALL,
             flex: 'none',
             fontWeight: primary ? 620 : 500,
-            color: primary ? 'var(--dsw-alias-label-on-brand, #fff)' : C.primary,
+            color: primary ? 'var(--dsw-alias-label-primary-foreground, #fff)' : C.primary,
             background: primary ? C.label : C.layer2,
             border: primary ? 'none' : `1px solid ${C.border1}`,
             borderRadius: 8,
@@ -2895,7 +2895,7 @@ window.__ModuleLoader__.load({
         muted: 'var(--dsw-alias-label-secondary, #646a73)',
         faint: 'var(--dsw-alias-label-tertiary, #8f959e)',
         brand: 'var(--dsw-alias-brand-primary, #4d6bfe)',
-        onBrand: 'var(--dsw-alias-label-on-brand, #fff)',
+        onBrand: 'var(--dsw-alias-label-primary-foreground, #fff)',
         ok: 'var(--dsw-alias-state-success-primary, #2ea121)',
         error: 'var(--dsw-alias-state-error-primary, #d83931)',
       };
