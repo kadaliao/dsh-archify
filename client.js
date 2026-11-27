@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'archify';
     // This client half's version; test/updates.test.mjs keeps it equal to package.json.
-    const VERSION = '0.4.3';
+    const VERSION = '0.4.4';
     // The version and GitHub link beside the panel's title, from the shared update block once apply(ctx) has run.
     let About = null;
     const RENDER_TOOL = 'archify_render';

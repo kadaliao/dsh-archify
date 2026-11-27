@@ -1,6 +1,6 @@
 {
   "name": "@kadaliao/dsh-archify",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "type": "module",
   "description": "Archify for DeepSeek Harness: ask for an architecture, workflow, sequence, data-flow, state, ER, class, tree, timeline or waterfall diagram, or a one-page explainer, and get a checked, interactive page in the conversation. Or start one from the Archify panel: pick a project folder and a type, and the plugin scans the repository and draws it. Architecture diagrams are laid out by the plugin and come with a structural review; schema slips and repository evidence are fixed before checking, so the first render usually passes.",
   "exports": {
